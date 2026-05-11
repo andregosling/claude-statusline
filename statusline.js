@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Two-line dashboard status line for Claude Code.
 // Works on macOS, Linux, and Windows with zero external dependencies (only Node, which Claude Code already ships).
-// VERSION: 2.0.0
+// VERSION: 2.1.0
 // REPO: https://github.com/andregosling/claude-statusline
 
 'use strict';
@@ -12,7 +12,7 @@ const path = require('path');
 const { execSync, spawn } = require('child_process');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 const REPO_RAW = 'https://raw.githubusercontent.com/andregosling/claude-statusline/main';
 const CACHE_DIR = path.join(os.homedir(), '.claude', 'cache', 'claude-statusline');
 const LAST_CHECK = path.join(CACHE_DIR, 'last-check');
@@ -316,22 +316,65 @@ async function main() {
 
   const SEP = `${C.rule} · ${RESET}`;
 
+  // ── 5h rate-limit + pace indicator ──────────────────────────────────────────
+  // "Pace" = how fast you're burning the 5h budget relative to clock time.
+  //   pace = used_fraction / elapsed_fraction
+  //   pace < 1.0  → using budget slower than time passing (room to spend)
+  //   pace = 1.0  → exactly on track to hit 100% at reset
+  //   pace > 1.0  → burning faster than time; you'll hit the cap early
+  // The bolinha's color reflects PACE (not raw %), so green = you're chill,
+  // even if you've already used 70% — as long as the window is mostly elapsed.
   let rlBadge = '';
   if (rl5 != null && rl5 !== 'null') {
-    const rlInt = Math.floor(Number(rl5) || 0);
-    const rc = rlInt >= 80 ? C.ctxHot : rlInt >= 50 ? C.ctxWarn : C.ctxOk;
+    const used = Number(rl5) || 0;                 // 0–100, % of 5h budget used
     let resetStr = '';
+    let elapsedFrac = null;                        // 0–1, how much of the 5h window has passed
     if (rl5Reset) {
       const secsLeft = Number(rl5Reset) - Math.floor(Date.now() / 1000);
       if (secsLeft > 0) {
         if (secsLeft < 60) resetStr = `${secsLeft}s`;
         else if (secsLeft < 3600) resetStr = `${Math.floor(secsLeft/60)}m`;
         else resetStr = `${Math.floor(secsLeft/3600)}h${Math.floor((secsLeft%3600)/60)}m`;
+        const FIVE_H = 5 * 3600;
+        elapsedFrac = Math.max(0, Math.min(1, (FIVE_H - secsLeft) / FIVE_H));
       }
     }
-    rlBadge = resetStr
-      ? `${SEP}${rc}●${RESET} ${C.label}5h · resets in ${resetStr}${RESET}`
-      : `${SEP}${rc}●${RESET} ${C.label}5h${RESET}`;
+
+    // Pace metric — only meaningful once a little time has elapsed (avoid div-by-zero
+    // spikes in the first seconds of a fresh window).
+    let pace = null;
+    if (elapsedFrac != null && elapsedFrac > 0.02) {
+      pace = (used / 100) / elapsedFrac;
+    }
+
+    // Bucket: pick icon + label + color from pace.
+    // Thresholds tuned so that "ok" covers the natural ±15% noise around even pacing.
+    let icon = '', label = '', dotColor = C.ctxOk;
+    if (pace == null) {
+      // No timing data yet — fall back to raw used color, no pace badge.
+      icon = '';
+      label = '';
+      dotColor = used >= 80 ? C.ctxHot : used >= 50 ? C.ctxWarn : C.ctxOk;
+    } else if (pace < 0.7) {
+      icon = '🐢'; label = 'chill';  dotColor = C.ctxOk;
+    } else if (pace < 1.0) {
+      icon = '🚶'; label = 'ok';     dotColor = C.ctxOk;
+    } else if (pace < 1.3) {
+      icon = '🏃'; label = 'fast';   dotColor = C.ctxWarn;
+    } else {
+      icon = '🔥'; label = 'hot';    dotColor = C.ctxHot;
+    }
+
+    // Format pace as a percentage (100% = exactly on track).
+    const pacePct = pace != null ? Math.round(pace * 100) : null;
+
+    let badge = `${SEP}${dotColor}●${RESET} ${C.label}5h`;
+    if (resetStr) badge += ` · resets in ${resetStr}`;
+    badge += RESET;
+    if (pacePct != null) {
+      badge += `${SEP}${dotColor}${icon} ${label} ${pacePct}%${RESET}`;
+    }
+    rlBadge = badge;
   }
 
   let line1 = `${C.rule}${G.tl}${RESET} ${C.path}${BOLD}${G.folder} ${pathStr}${RESET}`;
