@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Two-line dashboard status line for Claude Code.
 // Works on macOS, Linux, and Windows with zero external dependencies (only Node, which Claude Code already ships).
-// VERSION: 2.2.0
+// VERSION: 2.3.0
 // REPO: https://github.com/andregosling/claude-statusline
 
 'use strict';
@@ -12,10 +12,11 @@ const path = require('path');
 const { execSync, spawn } = require('child_process');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const VERSION = '2.2.0';
+const VERSION = '2.3.0';
 const REPO_RAW = 'https://raw.githubusercontent.com/andregosling/claude-statusline/main';
 const CACHE_DIR = path.join(os.homedir(), '.claude', 'cache', 'claude-statusline');
 const LAST_CHECK = path.join(CACHE_DIR, 'last-check');
+const REMOTE_VERSION_CACHE = path.join(CACHE_DIR, 'remote-version');
 const UPDATE_LOG = path.join(CACHE_DIR, 'update.log');
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24h
 const SELF_PATH = __filename;
@@ -234,7 +235,14 @@ async function backgroundUpdate() {
     if (!remote || !remote.startsWith('#!')) return;
     const remoteVerMatch = remote.match(/^\/\/ VERSION:\s*([\w.\-]+)/m);
     const remoteVer = remoteVerMatch ? remoteVerMatch[1] : null;
-    if (!remoteVer || remoteVer === VERSION) return;
+    if (!remoteVer) return;
+
+    // Always cache the last-known remote version, even when no update is needed.
+    // The renderer reads this synchronously on the hot path to decide whether to
+    // show the "update available" badge — keeps the render itself zero-network.
+    try { fs.writeFileSync(REMOTE_VERSION_CACHE, remoteVer); } catch {}
+
+    if (remoteVer === VERSION) return;
 
     let current = '';
     try { current = fs.readFileSync(SELF_PATH, 'utf8'); } catch {}
@@ -252,6 +260,27 @@ async function backgroundUpdate() {
         `[${new Date().toISOString()}] update failed: ${e.message}\n`);
     } catch {}
   }
+}
+
+// ── "Update available" badge ──────────────────────────────────────────────────
+// Reads the remote-version cache (written by the background update check, max 24h old).
+// If the cached remote version differs from VERSION, show a clickable amber badge.
+// Zero network cost on the hot path — just a tiny file read.
+// Suppress with CLAUDE_STATUSLINE_NO_UPDATE_BADGE=1.
+function updateBadge() {
+  if (process.env.CLAUDE_STATUSLINE_NO_UPDATE_BADGE === '1') return '';
+  let remoteVer;
+  try { remoteVer = fs.readFileSync(REMOTE_VERSION_CACHE, 'utf8').trim(); }
+  catch { return ''; }
+  if (!remoteVer || remoteVer === VERSION) return '';
+
+  const SEP = `${C.rule} · ${RESET}`;
+  const url = `https://github.com/andregosling/claude-statusline/blob/main/HELP.md#update`;
+  const BEL = '\x07';
+  const open  = `${ESC}]8;;${url}${BEL}`;
+  const close = `${ESC}]8;;${BEL}`;
+  // Amber + bold to catch the eye, but not blinking (real blink is hostile UX).
+  return `${SEP}${C.cost}${BOLD}${open}⬆ v${remoteVer} available${close}${RESET}`;
 }
 
 // ── Clickable (?) help link via OSC 8 ─────────────────────────────────────────
@@ -381,14 +410,15 @@ async function main() {
       icon = '🔥'; label = 'hot';    dotColor = C.ctxHot;
     }
 
-    // Format pace as a percentage (100% = exactly on track).
-    const pacePct = pace != null ? Math.round(pace * 100) : null;
+    // Format pace as a multiplier (1.0× = exactly on track). "×" makes it read
+    // as a rate, not a usage percentage, which users found ambiguous.
+    const paceX = pace != null ? pace.toFixed(1) : null;
 
     let badge = `${SEP}${dotColor}●${RESET} ${C.label}5h`;
     if (resetStr) badge += ` · resets in ${resetStr}`;
     badge += RESET;
-    if (pacePct != null) {
-      badge += `${SEP}${dotColor}${icon} ${label} ${pacePct}%${RESET}`;
+    if (paceX != null) {
+      badge += `${SEP}${dotColor}${icon} ${label} ${paceX}×${RESET}`;
     }
     rlBadge = badge;
   }
@@ -401,7 +431,7 @@ async function main() {
     `${C.tokens}${G.token} ${fmtTokens(tokTotal)} tok${RESET}${SEP}` +
     `${C.time}${G.clock} ${fmtDuration(durMs)}${RESET}${SEP}` +
     `${ctxC}${G.ctx} ${bar} ${Math.floor(Number(ctxPct) || 0)}%${RESET}` +
-    `${linesBadge}${rlBadge}${helpLink()}`;
+    `${linesBadge}${rlBadge}${updateBadge()}${helpLink()}`;
 
   process.stdout.write(line1 + '\n' + line2 + '\n');
 

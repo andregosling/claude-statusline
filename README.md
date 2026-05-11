@@ -124,29 +124,28 @@ Substitui todos os glyphs de Nerd Font por equivalentes ASCII (`◆`, `+`, `↑`
 | Duração |  `18m03s` | Tempo de wall-clock da sessão |
 | Context |  `███████░░░ 73%` | Verde <50%, âmbar 50-79%, vermelho ≥80% |
 | Linhas | `+156/-23` | Só aparece quando você editou algo |
-| Rate limit 5h | 🟢 `5h · resets in 2h14m · 🚶 ok 87%` | Bolinha + countdown + **pace** (uso vs tempo decorrido — 100% = no ritmo) |
+| Rate limit 5h | 🟢 `5h · resets in 2h14m · 🚶 ok 0.9×` | Bolinha + countdown + **pace** (multiplicador de ritmo — 1.0× = no ritmo) |
 
 ### Pace: como ler
 
-A bolinha colorida e o número de "pace" te dizem se você está gastando seu orçamento de 5h rápido ou devagar **comparado com o tempo decorrido**:
+O multiplicador `×` diz **quão rápido você está queimando o orçamento de 5h** comparado com o tempo passando:
 
-- `pace = uso_atual / tempo_decorrido` (ambos como fração de 0–1)
-- **100%** = vai chegar em 100% de uso exatamente no reset (ritmo perfeito)
-- **< 100%** = tem margem pra gastar 🟢
-- **> 100%** = vai bater o teto antes do reset 🟡 / 🔴
+- **1.0×** = ritmo perfeito (você zera o orçamento exatamente no momento do reset)
+- **< 1.0×** = gastando devagar, tem folga 🟢 (ex: `0.5×` = metade do ritmo)
+- **> 1.0×** = gastando rápido, vai bater o teto antes 🟡 / 🔴 (ex: `2.0×` = queimando o dobro)
 
 Buckets:
 
 | Pace | Ícone | Cor | Significa |
 |---|---|---|---|
-| < 70% | 🐢 chill | verde | bastante folga, pode gastar à vontade |
-| 70–99% | 🚶 ok | verde | exatamente no ritmo |
-| 100–129% | 🏃 fast | âmbar | acelerado, segura um pouco |
-| ≥ 130% | 🔥 hot | vermelho | muito acima, vai bater o teto |
+| < 0.7× | 🐢 chill | verde | bastante folga, pode gastar à vontade |
+| 0.7–0.99× | 🚶 ok | verde | exatamente no ritmo |
+| 1.0–1.29× | 🏃 fast | âmbar | acelerado, segura um pouco |
+| ≥ 1.3× | 🔥 hot | vermelho | muito acima, vai bater o teto |
 
-**Exemplo**: você usou 30% do limite em 1h dentro da janela de 5h. Pace = `30/100 ÷ 1/5 = 1.5` → `🔥 hot 150%`. Tradução: nesse ritmo você bate o teto em ~3h20, então segura.
+**Exemplo**: você usou 30% do limite em 1h dentro da janela de 5h. Pace = `0.3 ÷ 0.2 = 1.5×` → `🔥 hot 1.5×`. Tradução: nesse ritmo você bate o teto em ~3h20, então segura.
 
-Outro: usou 60% em 4h. Pace = `0.6 ÷ 0.8 = 0.75` → `🐢 chill 75%`. Tradução: tem orçamento sobrando pra última hora.
+Outro: usou 60% em 4h. Pace = `0.6 ÷ 0.8 = 0.75×` → `🐢 chill 0.8×`. Tradução: tem orçamento sobrando pra última hora.
 
 ---
 

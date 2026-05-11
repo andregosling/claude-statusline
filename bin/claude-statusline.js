@@ -14,6 +14,7 @@ const RENDERER = path.join(CLAUDE_DIR, 'statusline.js');
 const SETTINGS = path.join(CLAUDE_DIR, 'settings.json');
 const CACHE_DIR = path.join(CLAUDE_DIR, 'cache', 'claude-statusline');
 const LAST_CHECK = path.join(CACHE_DIR, 'last-check');
+const REMOTE_VERSION_CACHE = path.join(CACHE_DIR, 'remote-version');
 const UPDATE_LOG = path.join(CACHE_DIR, 'update.log');
 
 const ESC = '\x1b';
@@ -94,7 +95,7 @@ function cmdExplain() {
   P(`  ${cLabel}high/med/low${r}    Effort level (se setado em settings.json)`);
   P(`  ${cLabel}wt:feature-x${r}    Worktree atual (se aplicável)\n`);
 
-  P(`${cRule}╰─${r}  ${cCost} $0.42${r}  ${cRule}·${r}  ${cTok} 43.0k tok${r}  ${cRule}·${r}  ${cCtxOk} ███████░░░ 73%${r}  ${cRule}·${r}  ${cCtxOk}● 5h · resets in 2h14m${r}  ${cRule}·${r}  ${cCtxHot}🔥 hot 150%${r}\n`);
+  P(`${cRule}╰─${r}  ${cCost} $0.42${r}  ${cRule}·${r}  ${cTok} 43.0k tok${r}  ${cRule}·${r}  ${cCtxOk} ███████░░░ 73%${r}  ${cRule}·${r}  ${cCtxOk}● 5h · resets in 2h14m${r}  ${cRule}·${r}  ${cCtxHot}🔥 hot 1.5×${r}\n`);
 
   P(`${b}LINHA 2 — Métricas${r}`);
   P(`  ${cCost} $0.42${r}      Custo total da sessão em USD`);
@@ -105,14 +106,15 @@ function cmdExplain() {
   P(`  ${cCtxOk}●${r} 5h · ...   Rate limit do plano (janela de 5h), com countdown até reset\n`);
 
   P(`${b}🔥 PACE — o segmento mais importante${r}`);
-  P(`Diz se você está gastando seu orçamento de 5h mais rápido que o tempo passa.`);
-  P(`${d}  pace = uso_atual / tempo_decorrido (ambos como fração de 0-1)${r}\n`);
-  P(`  ${cCtxOk}🐢 chill${r}   ${d}<70%${r}    Bastante folga, pode gastar`);
-  P(`  ${cCtxOk}🚶 ok${r}      ${d}70-99%${r}  No ritmo`);
-  P(`  ${rgb(255,203,107)}🏃 fast${r}    ${d}100-129%${r} Acelerado, segura um pouco`);
-  P(`  ${cCtxHot}🔥 hot${r}     ${d}≥130%${r}   Vai bater o teto cedo\n`);
+  P(`Multiplicador de ritmo. Diz quão rápido você está queimando o orçamento de 5h.`);
+  P(`${d}  pace = uso_atual ÷ tempo_decorrido (ambos como fração da janela de 5h)${r}`);
+  P(`${d}  1.0× = ritmo perfeito · <1.0× = folga · >1.0× = vai bater o teto cedo${r}\n`);
+  P(`  ${cCtxOk}🐢 chill${r}   ${d}<0.7×${r}     Bastante folga, pode gastar à vontade`);
+  P(`  ${cCtxOk}🚶 ok${r}      ${d}0.7-0.99×${r} No ritmo`);
+  P(`  ${rgb(255,203,107)}🏃 fast${r}    ${d}1.0-1.29×${r} Acelerado, segura um pouco`);
+  P(`  ${cCtxHot}🔥 hot${r}     ${d}≥1.3×${r}     Vai bater o teto cedo\n`);
 
-  P(`${d}Exemplo: usou 30% do limite em 1h da janela. Pace = 0.30/0.20 = 1.50 → 🔥 hot 150%${r}`);
+  P(`${d}Exemplo: usou 30% do limite em 1h da janela. Pace = 0.30÷0.20 = 1.5× → 🔥 hot 1.5×${r}`);
   P(`${d}         Tradução: nesse ritmo, bate 100% em ~3h20.${r}\n`);
 
   P(`${b}MAIS${r}`);
@@ -145,6 +147,11 @@ async function cmdUpdate() {
   try { fs.chmodSync(RENDERER, 0o755); } catch {}
   fs.mkdirSync(CACHE_DIR, { recursive: true });
   fs.writeFileSync(LAST_CHECK, String(Date.now()));
+  // Update the cached remote-version so the renderer hides the badge immediately.
+  try {
+    const m = remote.match(/^\/\/ VERSION:\s*([\w.\-]+)/m);
+    if (m) fs.writeFileSync(REMOTE_VERSION_CACHE, m[1]);
+  } catch {}
   fs.appendFileSync(UPDATE_LOG, `[${new Date().toISOString()}] manual update via CLI\n`);
   ok(`updated to version ${localVersion()}`);
 }
@@ -180,6 +187,10 @@ async function cmdStatus() {
   }
   console.log(`  local version:      ${b}${localVersion()}${r}`);
   const rv = await remoteVersion();
+  if (rv) {
+    // Refresh the renderer's cache so the badge state stays in sync with reality.
+    try { fs.mkdirSync(CACHE_DIR, { recursive: true }); fs.writeFileSync(REMOTE_VERSION_CACHE, rv); } catch {}
+  }
   if (!rv) {
     console.log(`  latest on GitHub:   ${d}(network error)${r}`);
   } else {
