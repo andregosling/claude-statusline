@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# claude-statusline installer
+# claude-statusline installer (macOS / Linux)
 # Usage: curl -fsSL https://raw.githubusercontent.com/andregosling/claude-statusline/main/install.sh | bash
 
 set -euo pipefail
@@ -7,8 +7,7 @@ set -euo pipefail
 REPO_RAW="https://raw.githubusercontent.com/andregosling/claude-statusline/main"
 CLAUDE_DIR="${HOME}/.claude"
 SETTINGS="${CLAUDE_DIR}/settings.json"
-RENDERER="${CLAUDE_DIR}/statusline.sh"
-LOADER="${CLAUDE_DIR}/statusline-loader.sh"
+RENDERER="${CLAUDE_DIR}/statusline.js"
 BIN_DIR="${HOME}/.local/bin"
 CLI="${BIN_DIR}/claude-statusline"
 
@@ -18,43 +17,24 @@ warn() { printf "${c_warn}!${c_reset} %s\n" "$*"; }
 err()  { printf "${c_err}✗${c_reset} %s\n" "$*" >&2; }
 info() { printf "${c_dim}→${c_reset} %s\n" "$*"; }
 
-# ── Pre-flight ───────────────────────────────────────────────────────────────
 command -v curl >/dev/null 2>&1 || { err "curl is required"; exit 1; }
-command -v jq   >/dev/null 2>&1 || { err "jq is required (brew install jq)";   exit 1; }
-command -v git  >/dev/null 2>&1 || warn "git not found — git segment will stay empty"
-
+command -v node >/dev/null 2>&1 || { err "node is required (Claude Code already ships with Node — make sure it's on PATH)"; exit 1; }
 [ -d "$CLAUDE_DIR" ] || { err "$CLAUDE_DIR does not exist. Install Claude Code first."; exit 1; }
 
-# ── Download renderer + loader ───────────────────────────────────────────────
-info "downloading statusline.sh"
-curl -fsSL "$REPO_RAW/statusline.sh" -o "$RENDERER"
+NODE_BIN="$(command -v node)"
+
+info "downloading statusline.js"
+curl -fsSL "$REPO_RAW/statusline.js" -o "$RENDERER"
 chmod +x "$RENDERER"
 ok "installed $RENDERER"
 
-info "downloading statusline-loader.sh"
-curl -fsSL "$REPO_RAW/statusline-loader.sh" -o "$LOADER"
-chmod +x "$LOADER"
-ok "installed $LOADER"
-
 info "installing claude-statusline CLI"
 mkdir -p "$BIN_DIR"
-curl -fsSL "$REPO_RAW/bin/claude-statusline" -o "$CLI"
+curl -fsSL "$REPO_RAW/bin/claude-statusline.js" -o "$CLI"
 chmod +x "$CLI"
 ok "installed $CLI"
 
-# PATH check
-case ":$PATH:" in
-  *":$BIN_DIR:"*) ;;
-  *)
-    warn "$BIN_DIR is not on your PATH"
-    info "add this to your shell rc (~/.zshrc or ~/.bashrc):"
-    info "    export PATH=\"\$HOME/.local/bin:\$PATH\""
-    info "or run the CLI with its full path: $CLI"
-    ;;
-esac
-
-# ── Patch settings.json ──────────────────────────────────────────────────────
-# Add (or replace) the statusLine key, preserving everything else.
+# Patch settings.json with `node <renderer>` command (absolute paths everywhere — no ~).
 if [ -f "$SETTINGS" ]; then
   cp "$SETTINGS" "${SETTINGS}.bak.$(date +%s)"
   info "backed up existing settings.json"
@@ -62,28 +42,41 @@ else
   echo '{}' > "$SETTINGS"
 fi
 
-tmp="$(mktemp)"
-jq --arg cmd "$LOADER" '
-  .statusLine = {
-    "type": "command",
-    "command": $cmd,
-    "padding": 1,
-    "refreshInterval": 5
-  }
-' "$SETTINGS" > "$tmp"
-mv "$tmp" "$SETTINGS"
+# Use Node itself to safely edit JSON (no jq dep)
+node - "$SETTINGS" "$NODE_BIN" "$RENDERER" <<'NODE'
+const fs = require('fs');
+const [_, __, settingsPath, nodeBin, renderer] = process.argv;
+let s = {};
+try { s = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch {}
+s.statusLine = {
+  type: 'command',
+  command: `"${nodeBin}" "${renderer}"`,
+  padding: 1,
+  refreshInterval: 5,
+};
+fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2) + '\n');
+NODE
 ok "patched $SETTINGS"
 
-# ── Font check (best-effort) ─────────────────────────────────────────────────
-if /bin/ls "$HOME/Library/Fonts/" /Library/Fonts/ 2>/dev/null | grep -qi "nerd"; then
+case ":$PATH:" in
+  *":$BIN_DIR:"*) ;;
+  *)
+    warn "$BIN_DIR is not on your PATH"
+    info "add this to your shell rc:"
+    info '    export PATH="$HOME/.local/bin:$PATH"'
+    info "or run with full path: $CLI"
+    ;;
+esac
+
+if /bin/ls "$HOME/Library/Fonts/" /Library/Fonts/ /usr/share/fonts /usr/local/share/fonts 2>/dev/null | grep -qi "nerd"; then
   ok "Nerd Font detected"
 else
   warn "no Nerd Font detected — icons will render as boxes (□)"
-  info "macOS:   brew install --cask font-jetbrains-mono-nerd-font"
-  info "Linux:   https://www.nerdfonts.com/font-downloads"
-  info "After installing, set your terminal font to 'JetBrainsMono Nerd Font'."
+  info "macOS:  brew install --cask font-jetbrains-mono-nerd-font"
+  info "Linux:  https://www.nerdfonts.com/font-downloads"
+  info "Or set CLAUDE_STATUSLINE_PLAIN=1 to use ASCII fallbacks."
 fi
 
 echo
 ok "done. reload Claude Code (or wait ~5s) to see the new status line."
-info "updates are checked automatically every 24h from the GitHub repo."
+info "updates check automatically every 24h. Force now: claude-statusline update"

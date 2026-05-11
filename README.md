@@ -1,6 +1,8 @@
 # claude-statusline
 
-Status line de duas linhas para o [Claude Code](https://claude.com/code) — denso, colorido, e com tudo que importa numa olhada: path, branch + dirty state, modelo, custo, tokens, duração, uso do context window, linhas alteradas e rate limit do plano com contagem regressiva.
+Status line de duas linhas para o [Claude Code](https://claude.com/code) — denso, colorido, com tudo que importa numa olhada: path, branch + dirty state, modelo, custo, tokens, duração, uso do context window, linhas alteradas e rate limit do plano com contagem regressiva.
+
+**Funciona em macOS, Linux e Windows.** Sem dependências externas (sem `jq`, sem `bash` no Windows) — usa o Node que já vem com o Claude Code.
 
 ![preview](./screenshot.png)
 
@@ -11,19 +13,26 @@ Status line de duas linhas para o [Claude Code](https://claude.com/code) — den
 
 ---
 
-## Instalação (1 comando)
+## Instalação
+
+### macOS / Linux
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/andregosling/claude-statusline/main/install.sh | bash
 ```
 
-O instalador:
+### Windows (PowerShell)
 
-- Baixa o `statusline.sh` para `~/.claude/`
-- Baixa o `statusline-loader.sh` (wrapper que faz auto-update)
-- Instala o CLI `claude-statusline` em `~/.local/bin/` (avisa se esse dir não está no seu `$PATH`)
-- Edita seu `~/.claude/settings.json` adicionando a seção `statusLine` (faz backup primeiro)
-- Avisa se você não tem uma Nerd Font instalada
+```powershell
+irm https://raw.githubusercontent.com/andregosling/claude-statusline/main/install.ps1 | iex
+```
+
+Os instaladores:
+
+- Baixam o `statusline.js` para `~/.claude/`
+- Instalam o CLI `claude-statusline` (em `~/.local/bin` no Unix, `~/.claude/bin` no Windows)
+- Editam o `~/.claude/settings.json` adicionando a seção `statusLine` (faz backup)
+- Avisam se você não tem uma Nerd Font instalada e se o dir do CLI não está no PATH
 
 Depois é só recarregar o Claude Code.
 
@@ -33,7 +42,7 @@ Depois é só recarregar o Claude Code.
 
 O status line se atualiza **automaticamente em até 24h** depois de qualquer commit nesse repo, sem você fazer nada.
 
-Como funciona: o `statusline-loader.sh` é chamado pelo Claude Code a cada refresh. Ele roda o renderer local (instantâneo) e, no máximo 1x por dia, dispara um `curl` em background para checar se tem versão nova no GitHub. Se tiver, sobrescreve o arquivo local. Render nunca espera pela rede.
+Como funciona: o renderer (`statusline.js`) roda a cada refresh do Claude Code. No máximo 1x por dia, ele dispara um processo Node filho em background que checa o GitHub. Se tem versão nova, sobrescreve o próprio arquivo. Render nunca espera pela rede.
 
 ### CLI: `claude-statusline`
 
@@ -48,20 +57,19 @@ claude-statusline help        # ajuda
 O `status` te diz se tem update disponível:
 
 ```
-  local version:      1.1.0
-  latest on GitHub:   1.2.0  ← update available (run: claude-statusline update)
+  local version:      2.0.0
+  latest on GitHub:   2.1.0  ← update available (run: claude-statusline update)
 ```
 
-Para desligar o auto-update e travar na versão atual: edite `~/.claude/settings.json` e troque `statusline-loader.sh` por `statusline.sh` no campo `command`.
+Para travar na versão atual (desligar auto-update): edite `~/.claude/settings.json` e troque o command pra apontar pra uma cópia que você mantém manualmente, ou simplesmente não rode mais o CLI.
 
 ---
 
 ## Requisitos
 
-- **Claude Code** (obviamente)
-- **`jq`** — `brew install jq` (macOS) ou `apt install jq` (Linux)
-- **`curl`** — já vem no macOS/Linux
-- **Uma Nerd Font** no seu terminal (recomendado: JetBrainsMono Nerd Font)
+- **Claude Code** (obviamente — ele traz o Node embutido)
+- **Node** acessível no PATH (geralmente já vem com o Claude Code)
+- **Uma Nerd Font** no seu terminal (opcional — sem ela, defina `CLAUDE_STATUSLINE_PLAIN=1` para usar fallbacks ASCII)
 
 ### Instalar a Nerd Font
 
@@ -70,9 +78,25 @@ Para desligar o auto-update e travar na versão atual: edite `~/.claude/settings
 brew install --cask font-jetbrains-mono-nerd-font
 ```
 
+**Windows:**
+```powershell
+winget install --id=DEVCOM.JetBrainsMonoNerdFont
+# ou
+scoop install JetBrainsMono-NF
+```
+
 **Linux:** baixe de [nerdfonts.com](https://www.nerdfonts.com/font-downloads).
 
-Depois, configure seu terminal (iTerm2 / Terminal.app / Alacritty / WezTerm / etc.) para usar `JetBrainsMono Nerd Font` como fonte. Sem isso os ícones aparecem como quadradinhos vazios (`□`) — o status line continua funcionando, só fica menos bonito.
+Depois, configure seu terminal (Windows Terminal / iTerm2 / Terminal.app / Alacritty / WezTerm / etc.) para usar `JetBrainsMono Nerd Font` como fonte. Sem isso os ícones aparecem como quadradinhos vazios (`□`) ou caracteres aleatórios — o status line continua funcionando, só fica menos bonito.
+
+**Modo plain ASCII (sem Nerd Font):**
+
+```bash
+export CLAUDE_STATUSLINE_PLAIN=1   # macOS/Linux
+$env:CLAUDE_STATUSLINE_PLAIN = "1" # PowerShell
+```
+
+Substitui todos os glyphs de Nerd Font por equivalentes ASCII (`◆`, `+`, `↑`, etc.) — funciona em qualquer terminal.
 
 ---
 
@@ -103,27 +127,27 @@ Depois, configure seu terminal (iTerm2 / Terminal.app / Alacritty / WezTerm / et
 
 ## Customização
 
-O `statusline.sh` é um script bash simples. Edita à vontade:
+`statusline.js` é um único arquivo Node.js sem dependências. Edita à vontade:
 
 ```bash
-$EDITOR ~/.claude/statusline.sh
+$EDITOR ~/.claude/statusline.js
 ```
 
-**Atenção**: se você editar localmente, o auto-update vai sobrescrever suas mudanças na próxima checagem. Para customizar permanentemente:
+**Atenção**: se você editar localmente, o auto-update vai sobrescrever suas mudanças. Para customizar permanentemente:
 
 1. Faça fork do repo
 2. Edite seu fork
-3. Mude a URL `REPO_RAW` em `~/.claude/statusline-loader.sh` para apontar pro seu fork
+3. No `statusline.js`, mude a constante `REPO_RAW` para apontar pro seu fork
 
-Ou simplesmente desative o auto-update (veja seção acima).
+Ou simplesmente reinstale apontando pro fork.
 
-### Variáveis úteis pra mexer
+### O que dá pra mudar fácil
 
-No topo de `statusline.sh`:
+No topo de `statusline.js`:
 
-- **Cores**: `C_PATH`, `C_GIT`, `C_MODEL`, etc. — RGB truecolor, mude o `38;2;R;G;B`
-- **Glyphs**: `G_FOLDER`, `G_BRANCH`, `G_MODEL`, etc. — qualquer caractere/emoji/glyph Nerd Font
-- **Thresholds**: a função `ctx_color_for()` controla quando o context bar fica âmbar (50%) e vermelho (80%)
+- **Cores**: objeto `C` — RGB truecolor, mude `rgb(R, G, B)`
+- **Glyphs**: objeto `G` — qualquer caractere / emoji / glyph Nerd Font
+- **Thresholds**: função `ctxColor()` controla quando o context bar fica âmbar (50%) e vermelho (80%)
 - **Refresh**: edite `refreshInterval` em `~/.claude/settings.json` (segundos)
 
 ---
@@ -134,20 +158,24 @@ No topo de `statusline.sh`:
 claude-statusline uninstall
 ```
 
-Pede confirmação e remove scripts, cache, CLI, e a seção `"statusLine"` do `settings.json` (com backup).
+Pede confirmação e remove o renderer, cache, CLI, e a seção `"statusLine"` do `settings.json` (com backup).
 
 ---
 
 ## Troubleshooting
 
-**Os ícones aparecem como `□` ou `?`** — sua fonte de terminal não é uma Nerd Font. Veja a seção de [Requisitos](#requisitos).
+**Não aparece nada (ou só aparece `main`)** — geralmente significa que `node` não está no PATH onde o Claude Code o executa. Teste:
 
-**Não aparece nada** — verifique se o script tem permissão de execução:
 ```bash
-chmod +x ~/.claude/statusline.sh ~/.claude/statusline-loader.sh
+node --version
 ```
 
-**Erro "jq: command not found"** — instale o jq: `brew install jq`.
+Se isso falhar, instale Node (ou descubra onde o Claude Code colocou o Node embutido e ajuste o PATH).
+
+**Os ícones aparecem como `□` ou `?`** — sua fonte de terminal não é uma Nerd Font. Veja [Requisitos](#requisitos), ou ative o modo plain:
+```bash
+export CLAUDE_STATUSLINE_PLAIN=1
+```
 
 **Atualização não chegou** — force agora:
 ```bash
@@ -158,6 +186,17 @@ claude-statusline update
 ```bash
 cat ~/.claude/cache/claude-statusline/update.log
 ```
+
+**No Windows: erro "execution policy"** — o instalador precisa rodar PowerShell scripts. Se você bloquear scripts:
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+```
+
+---
+
+## Versões anteriores
+
+A v1.x usava bash + jq e só funcionava em Unix. A v2.0 reescreveu tudo em Node.js para funcionar igual em macOS/Linux/Windows com zero deps externas. Se você instalou a v1.x, rode o instalador novo — ele cuida da migração.
 
 ---
 
