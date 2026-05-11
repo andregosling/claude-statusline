@@ -9,6 +9,8 @@ CLAUDE_DIR="${HOME}/.claude"
 SETTINGS="${CLAUDE_DIR}/settings.json"
 RENDERER="${CLAUDE_DIR}/statusline.sh"
 LOADER="${CLAUDE_DIR}/statusline-loader.sh"
+BIN_DIR="${HOME}/.local/bin"
+CLI="${BIN_DIR}/claude-statusline"
 
 c_ok="\033[32m"; c_warn="\033[33m"; c_err="\033[31m"; c_dim="\033[2m"; c_reset="\033[0m"
 ok()   { printf "${c_ok}✓${c_reset} %s\n" "$*"; }
@@ -33,6 +35,23 @@ info "downloading statusline-loader.sh"
 curl -fsSL "$REPO_RAW/statusline-loader.sh" -o "$LOADER"
 chmod +x "$LOADER"
 ok "installed $LOADER"
+
+info "installing claude-statusline CLI"
+mkdir -p "$BIN_DIR"
+curl -fsSL "$REPO_RAW/bin/claude-statusline" -o "$CLI"
+chmod +x "$CLI"
+ok "installed $CLI"
+
+# PATH check
+case ":$PATH:" in
+  *":$BIN_DIR:"*) ;;
+  *)
+    warn "$BIN_DIR is not on your PATH"
+    info "add this to your shell rc (~/.zshrc or ~/.bashrc):"
+    info "    export PATH=\"\$HOME/.local/bin:\$PATH\""
+    info "or run the CLI with its full path: $CLI"
+    ;;
+esac
 
 # ── Patch settings.json ──────────────────────────────────────────────────────
 # Add (or replace) the statusLine key, preserving everything else.

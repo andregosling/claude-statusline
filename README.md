@@ -21,6 +21,7 @@ O instalador:
 
 - Baixa o `statusline.sh` para `~/.claude/`
 - Baixa o `statusline-loader.sh` (wrapper que faz auto-update)
+- Instala o CLI `claude-statusline` em `~/.local/bin/` (avisa se esse dir não está no seu `$PATH`)
 - Edita seu `~/.claude/settings.json` adicionando a seção `statusLine` (faz backup primeiro)
 - Avisa se você não tem uma Nerd Font instalada
 
@@ -34,13 +35,22 @@ O status line se atualiza **automaticamente em até 24h** depois de qualquer com
 
 Como funciona: o `statusline-loader.sh` é chamado pelo Claude Code a cada refresh. Ele roda o renderer local (instantâneo) e, no máximo 1x por dia, dispara um `curl` em background para checar se tem versão nova no GitHub. Se tiver, sobrescreve o arquivo local. Render nunca espera pela rede.
 
-Para forçar update agora:
+### CLI: `claude-statusline`
 
 ```bash
-rm ~/.claude/cache/claude-statusline/last-check
+claude-statusline status      # mostra versão local, versão no GitHub, último check
+claude-statusline update      # força download da versão mais recente AGORA
+claude-statusline version     # imprime a versão local
+claude-statusline uninstall   # remove tudo e despatcheia settings.json
+claude-statusline help        # ajuda
 ```
 
-O próximo render vai buscar a versão mais recente.
+O `status` te diz se tem update disponível:
+
+```
+  local version:      1.1.0
+  latest on GitHub:   1.2.0  ← update available (run: claude-statusline update)
+```
 
 Para desligar o auto-update e travar na versão atual: edite `~/.claude/settings.json` e troque `statusline-loader.sh` por `statusline.sh` no campo `command`.
 
@@ -121,11 +131,10 @@ No topo de `statusline.sh`:
 ## Desinstalar
 
 ```bash
-rm ~/.claude/statusline.sh ~/.claude/statusline-loader.sh
-rm -rf ~/.claude/cache/claude-statusline
+claude-statusline uninstall
 ```
 
-E remova manualmente a chave `"statusLine"` do `~/.claude/settings.json`.
+Pede confirmação e remove scripts, cache, CLI, e a seção `"statusLine"` do `settings.json` (com backup).
 
 ---
 
@@ -140,9 +149,9 @@ chmod +x ~/.claude/statusline.sh ~/.claude/statusline-loader.sh
 
 **Erro "jq: command not found"** — instale o jq: `brew install jq`.
 
-**Atualização não chegou** — force a próxima checagem:
+**Atualização não chegou** — force agora:
 ```bash
-rm ~/.claude/cache/claude-statusline/last-check
+claude-statusline update
 ```
 
 **Quero ver o log de updates:**

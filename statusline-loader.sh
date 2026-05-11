@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # claude-statusline loader
+# VERSION: 1.1.0
 # Runs the locally-cached renderer fast, and once per day checks GitHub for updates
 # in the background. Users get new versions within 24h of a push, without paying any
 # network latency on the hot path.

@@ -2,6 +2,8 @@
 # Two-line dashboard status line for Claude Code.
 # Reads a JSON payload from stdin and renders a dense, colorful summary.
 # Requires: jq, a Nerd Font installed in the terminal (JetBrainsMono Nerd Font recommended).
+# VERSION: 1.1.0
+# REPO: https://github.com/andregosling/claude-statusline
 
 set -u
 
