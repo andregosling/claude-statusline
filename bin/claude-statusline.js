@@ -65,11 +65,63 @@ function usage() {
   console.log(`${b}COMMANDS${r}`);
   console.log(`  update      Force-download the latest statusline.js from GitHub now`);
   console.log(`  status      Show installed files, last update check, and current version`);
+  console.log(`  explain     Print what each segment of the status line means`);
   console.log(`  version     Print the version of the local statusline.js`);
   console.log(`  uninstall   Remove statusline files and unpatch settings.json`);
   console.log(`  help        Show this message\n`);
   console.log(`${b}REPO${r}`);
   console.log(`  ${REPO_URL}`);
+}
+
+function cmdExplain() {
+  const rgb = (R, G, B) => `\x1b[38;2;${R};${G};${B}m`;
+  const cPath = rgb(125, 207, 255), cGit = rgb(195, 232, 141), cModel = rgb(199, 146, 234);
+  const cCost = rgb(255, 203, 107), cTok = rgb(130, 170, 255), cCtxOk = rgb(195, 232, 141);
+  const cCtxHot = rgb(240, 113, 120), cRule = rgb(90, 100, 120), cLabel = rgb(160, 170, 190);
+
+  const out = [];
+  const P = (s = '') => out.push(s);
+
+  P(`${b}claude-statusline${r} — o que significa cada segmento\n`);
+
+  P(`${cRule}╭─${r}  ${cPath}${b}~/code/projeto/src${r}  ${cRule}·${r}  ${cGit} main +3 ~2${r}  ${cRule}·${r}  ${cModel}󰚩 Opus 4.7${r}\n`);
+
+  P(`${b}LINHA 1 — Contexto${r}`);
+  P(`  ${cPath} ~/path${r}        Diretório atual (colapsa para 2 últimos segmentos quando profundo)`);
+  P(`  ${cGit} branch ${cGit}+N${r} ${cGit}~N${r}  Git: branch + arquivos novos / modificados / deletados`);
+  P(`                ${d}verde = limpo · âmbar = dirty · ↑/↓ = ahead/behind${r}`);
+  P(`  ${cModel}󰚩 Opus 4.7${r}    Modelo do Claude ativo`);
+  P(`  ${cLabel}high/med/low${r}    Effort level (se setado em settings.json)`);
+  P(`  ${cLabel}wt:feature-x${r}    Worktree atual (se aplicável)\n`);
+
+  P(`${cRule}╰─${r}  ${cCost} $0.42${r}  ${cRule}·${r}  ${cTok} 43.0k tok${r}  ${cRule}·${r}  ${cCtxOk} ███████░░░ 73%${r}  ${cRule}·${r}  ${cCtxOk}● 5h · resets in 2h14m${r}  ${cRule}·${r}  ${cCtxHot}🔥 hot 150%${r}\n`);
+
+  P(`${b}LINHA 2 — Métricas${r}`);
+  P(`  ${cCost} $0.42${r}      Custo total da sessão em USD`);
+  P(`  ${cTok} 43.0k tok${r}  Tokens (input + output)`);
+  P(`  ${d}18m03s${r}      Duração da sessão`);
+  P(`  ${cCtxOk}██░░ 73%${r}    Context window — verde <50%, âmbar 50-79%, vermelho ≥80%`);
+  P(`  ${cGit}+156${r}/${rgb(240,113,120)}-23${r}     Linhas adicionadas/removidas nessa sessão`);
+  P(`  ${cCtxOk}●${r} 5h · ...   Rate limit do plano (janela de 5h), com countdown até reset\n`);
+
+  P(`${b}🔥 PACE — o segmento mais importante${r}`);
+  P(`Diz se você está gastando seu orçamento de 5h mais rápido que o tempo passa.`);
+  P(`${d}  pace = uso_atual / tempo_decorrido (ambos como fração de 0-1)${r}\n`);
+  P(`  ${cCtxOk}🐢 chill${r}   ${d}<70%${r}    Bastante folga, pode gastar`);
+  P(`  ${cCtxOk}🚶 ok${r}      ${d}70-99%${r}  No ritmo`);
+  P(`  ${rgb(255,203,107)}🏃 fast${r}    ${d}100-129%${r} Acelerado, segura um pouco`);
+  P(`  ${cCtxHot}🔥 hot${r}     ${d}≥130%${r}   Vai bater o teto cedo\n`);
+
+  P(`${d}Exemplo: usou 30% do limite em 1h da janela. Pace = 0.30/0.20 = 1.50 → 🔥 hot 150%${r}`);
+  P(`${d}         Tradução: nesse ritmo, bate 100% em ~3h20.${r}\n`);
+
+  P(`${b}MAIS${r}`);
+  P(`  Página completa:  ${cPath}https://github.com/andregosling/claude-statusline/blob/main/HELP.md${r}`);
+  P(`  Repo:             ${cPath}${REPO_URL}${r}`);
+  P(`  Sem Nerd Font:    ${d}CLAUDE_STATUSLINE_PLAIN=1${r}`);
+  P(`  Sem o (?) link:   ${d}CLAUDE_STATUSLINE_NO_HELP=1${r}`);
+
+  console.log(out.join('\n'));
 }
 
 async function cmdUpdate() {
@@ -173,6 +225,7 @@ const cmd = (process.argv[2] || 'help').toLowerCase();
   switch (cmd) {
     case 'update': await cmdUpdate(); break;
     case 'status': await cmdStatus(); break;
+    case 'explain': cmdExplain(); break;
     case 'version': case '-v': case '--version': console.log(localVersion()); break;
     case 'uninstall': await cmdUninstall(); break;
     case 'help': case '-h': case '--help': usage(); break;

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Two-line dashboard status line for Claude Code.
 // Works on macOS, Linux, and Windows with zero external dependencies (only Node, which Claude Code already ships).
-// VERSION: 2.1.0
+// VERSION: 2.2.0
 // REPO: https://github.com/andregosling/claude-statusline
 
 'use strict';
@@ -12,7 +12,7 @@ const path = require('path');
 const { execSync, spawn } = require('child_process');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const VERSION = '2.1.0';
+const VERSION = '2.2.0';
 const REPO_RAW = 'https://raw.githubusercontent.com/andregosling/claude-statusline/main';
 const CACHE_DIR = path.join(os.homedir(), '.claude', 'cache', 'claude-statusline');
 const LAST_CHECK = path.join(CACHE_DIR, 'last-check');
@@ -254,6 +254,22 @@ async function backgroundUpdate() {
   }
 }
 
+// ── Clickable (?) help link via OSC 8 ─────────────────────────────────────────
+// Most modern terminals (iTerm2, WezTerm, Kitty, Windows Terminal, Ghostty, recent
+// VTE-based) honor OSC 8 hyperlinks: Cmd/Ctrl+click opens the URL. Older terminals
+// just see the visible text "(?)" with the escape codes filtered out gracefully.
+// Disable explicitly with CLAUDE_STATUSLINE_NO_HELP=1.
+function helpLink() {
+  if (process.env.CLAUDE_STATUSLINE_NO_HELP === '1') return '';
+  const url = `https://github.com/andregosling/claude-statusline/blob/main/HELP.md`;
+  const BEL = '\x07';
+  // OSC 8 ; ; URL BEL  TEXT  OSC 8 ; ; BEL
+  const open  = `${ESC}]8;;${url}${BEL}`;
+  const close = `${ESC}]8;;${BEL}`;
+  const SEP = `${C.rule} · ${RESET}`;
+  return `${SEP}${C.label}${open}(?)${close}${RESET}`;
+}
+
 // ── Read payload from stdin ───────────────────────────────────────────────────
 function readStdin() {
   return new Promise((resolve) => {
@@ -385,7 +401,7 @@ async function main() {
     `${C.tokens}${G.token} ${fmtTokens(tokTotal)} tok${RESET}${SEP}` +
     `${C.time}${G.clock} ${fmtDuration(durMs)}${RESET}${SEP}` +
     `${ctxC}${G.ctx} ${bar} ${Math.floor(Number(ctxPct) || 0)}%${RESET}` +
-    `${linesBadge}${rlBadge}`;
+    `${linesBadge}${rlBadge}${helpLink()}`;
 
   process.stdout.write(line1 + '\n' + line2 + '\n');
 

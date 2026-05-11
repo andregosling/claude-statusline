@@ -49,10 +49,13 @@ Como funciona: o renderer (`statusline.js`) roda a cada refresh do Claude Code. 
 ```bash
 claude-statusline status      # mostra versão local, versão no GitHub, último check
 claude-statusline update      # força download da versão mais recente AGORA
+claude-statusline explain     # explica o que cada segmento significa (no terminal)
 claude-statusline version     # imprime a versão local
 claude-statusline uninstall   # remove tudo e despatcheia settings.json
 claude-statusline help        # ajuda
 ```
+
+Você também tem um **`(?)` clicável no final da status line** — Cmd/Ctrl+click abre a [página HELP.md](./HELP.md) no GitHub. Funciona em iTerm2, WezTerm, Kitty, Windows Terminal, Ghostty. Para esconder o link: `export CLAUDE_STATUSLINE_NO_HELP=1`.
 
 O `status` te diz se tem update disponível:
 
