@@ -8,7 +8,7 @@ Status line de duas linhas para o [Claude Code](https://claude.com/code) — den
 
 ```
 ╭─  ~/code/projeto/src · ⎇ main +3 ~2 · 󰚩 Opus 4.7 · high
-╰─  $0.42 ·  43.0k tok ·  18m03s ·  ███████░░░ 73%  +156/-23 · 🟢 5h · resets in 2h14m
+╰─  $0.42 ·  8.0k ↑ · 1.2k ↓ ·  18m03s ·  ███████░░░ 73%  +156/-23 · 🟢 5h · resets in 2h14m
 ```
 
 ---
@@ -120,7 +120,7 @@ Substitui todos os glyphs de Nerd Font por equivalentes ASCII (`◆`, `+`, `↑`
 | Segmento | Exemplo | Notas |
 |---|---|---|
 | Custo |  `$0.42` | Total da sessão em USD |
-| Tokens |  `43.0k tok` | Soma de input + output |
+| Tokens |  `8.0k ↑ · 1.2k ↓` | Enviados (input — inclui system prompt) / recebidos (output) |
 | Duração |  `18m03s` | Tempo de wall-clock da sessão |
 | Context |  `███████░░░ 73%` | Verde <50%, âmbar 50-79%, vermelho ≥80% |
 | Linhas | `+156/-23` | Só aparece quando você editou algo |

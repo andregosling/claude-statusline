@@ -37,14 +37,20 @@ Indicador de worktree. Só aparece se você estiver dentro de um worktree do Cla
 ## Linha 2 — Métricas
 
 ```
-╰─  $0.42 ·  43.0k tok ·  18m03s ·  ███████░░░ 73%  +156/-23 · 🟢 5h · resets in 2h14m · 🔥 hot 150%
+╰─  $0.42 ·  8.0k ↑ · 1.2k ↓ ·  18m03s ·  ███████░░░ 73%  +156/-23 · 🟢 5h · resets in 2h14m · 🔥 hot 1.5×
 ```
 
 ### ` $0.42`
 Custo total em USD dessa sessão (vem do campo `cost.total_cost_usd` do Claude Code).
 
-### ` 43.0k tok`
-Soma de tokens de input + output usados na sessão. Formato `k` (mil) e `M` (milhão).
+### ` 8.0k ↑ · 1.2k ↓` — tokens enviados / recebidos
+
+Tokens acumulados da sessão, separados por direção:
+
+- **`↑` enviados (input)** — tudo que vai pro modelo: o **system prompt do Claude Code** + definições de ferramentas + CLAUDE.md + toda a sua conversa. Por isso um simples "oi" já mostra `~8k ↑` — esse overhead é real, não é bug. É o custo fixo de qualquer sessão.
+- **`↓` recebidos (output)** — só o que o Claude gerou em resposta. Esse número é "puro".
+
+**Por que não tem "tokens da minha conversa" separado?** Porque o Claude Code não fornece esse dado — ele não separa "seu texto" do system prompt no campo de input. O que dá pra mostrar de forma honesta é a direção: enviado vs recebido.
 
 ### ` 18m03s`
 Wall-clock da sessão. Quanto tempo passou desde que você abriu o Claude Code.

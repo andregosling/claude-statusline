@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Two-line dashboard status line for Claude Code.
 // Works on macOS, Linux, and Windows with zero external dependencies (only Node, which Claude Code already ships).
-// VERSION: 2.3.0
+// VERSION: 2.4.0
 // REPO: https://github.com/andregosling/claude-statusline
 
 'use strict';
@@ -12,7 +12,7 @@ const path = require('path');
 const { execSync, spawn } = require('child_process');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const VERSION = '2.3.0';
+const VERSION = '2.4.0';
 const REPO_RAW = 'https://raw.githubusercontent.com/andregosling/claude-statusline/main';
 const CACHE_DIR = path.join(os.homedir(), '.claude', 'cache', 'claude-statusline');
 const LAST_CHECK = path.join(CACHE_DIR, 'last-check');
@@ -50,6 +50,7 @@ const PLAIN = process.env.CLAUDE_STATUSLINE_PLAIN === '1';
 const G = PLAIN ? {
   folder: '', branch: 'git:', add: '+', mod: '~', del: '-',
   ahead: '↑', behind: '↓', model: '◆', cost: '$', token: 'T',
+  tokIn: '^', tokOut: 'v',
   clock: 't:', ctx: 'ctx', rate: '*', tl: '╭─', bl: '╰─',
 } : {
   folder: '',     //
@@ -60,6 +61,8 @@ const G = PLAIN ? {
   model: '\u{F06A9}',   // 󰚩
   cost: '',       //
   token: '',      //
+  tokIn: '↑',
+  tokOut: '↓',
   clock: '',      //
   ctx: '',        //
   rate: '',       //
@@ -343,7 +346,11 @@ async function main() {
 
   const pathStr = prettyPath(cwd);
   const gitStr = gitSegment(cwd);
-  const tokTotal = (Number(ctxIn) || 0) + (Number(ctxOut) || 0);
+  // Sent (input) and received (output) tokens, accumulated over the session.
+  // Note: "sent" includes the Claude Code system prompt + tool definitions, so a
+  // single "oi" still shows ~8k — that overhead is real, not a bug.
+  const tokIn = Number(ctxIn) || 0;
+  const tokOut = Number(ctxOut) || 0;
   const ctxC = ctxColor(ctxPct);
   const bar = ctxBar(ctxPct);
   const modelStr = modelDisplay(modelId, modelName);
@@ -428,7 +435,7 @@ async function main() {
   line1 += `${SEP}${C.model}${G.model} ${modelStr}${RESET}${effortBadge}${wtBadge}`;
 
   const line2 = `${C.rule}${G.bl}${RESET} ${C.cost}${G.cost} ${fmtCost(cost)}${RESET}${SEP}` +
-    `${C.tokens}${G.token} ${fmtTokens(tokTotal)} tok${RESET}${SEP}` +
+    `${C.tokens}${G.token} ${fmtTokens(tokIn)} ${G.tokIn} ${C.rule}·${RESET} ${C.tokens}${fmtTokens(tokOut)} ${G.tokOut}${RESET}${SEP}` +
     `${C.time}${G.clock} ${fmtDuration(durMs)}${RESET}${SEP}` +
     `${ctxC}${G.ctx} ${bar} ${Math.floor(Number(ctxPct) || 0)}%${RESET}` +
     `${linesBadge}${rlBadge}${updateBadge()}${helpLink()}`;
