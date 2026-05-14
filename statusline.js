@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Two-line dashboard status line for Claude Code.
 // Works on macOS, Linux, and Windows with zero external dependencies (only Node, which Claude Code already ships).
-// VERSION: 2.6.0
+// VERSION: 2.6.1
 // REPO: https://github.com/andregosling/claude-statusline
 
 'use strict';
@@ -12,7 +12,7 @@ const path = require('path');
 const { execSync, spawn } = require('child_process');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const VERSION = '2.6.0';
+const VERSION = '2.6.1';
 const REPO_RAW = 'https://raw.githubusercontent.com/andregosling/claude-statusline/main';
 const CACHE_DIR = path.join(os.homedir(), '.claude', 'cache', 'claude-statusline');
 const LAST_CHECK = path.join(CACHE_DIR, 'last-check');
@@ -419,11 +419,16 @@ async function main() {
     // Bolinha color — RAW USAGE only, time-independent.
     const dotColor = used >= 80 ? C.ctxHot : used >= 50 ? C.ctxWarn : C.ctxOk;
 
-    // Pace — only meaningful once enough of the window has elapsed. In the first
-    // ~10% (~30min) the ratio is pure noise (tiny denominator), so we hide it.
-    let pace = null;
-    if (elapsedFrac != null && elapsedFrac >= 0.10) {
+    // Pace — usage rate vs how much of the 5h window has elapsed.
+    //   pace = used_fraction / elapsed_fraction
+    // In the first ~10% (~30min) the denominator is tiny, so the number jumps
+    // around render-to-render (a single message can spike it to 5×). We still
+    // SHOW it — hiding the segment confused users into thinking it broke — but
+    // we tag it "warming" so the jitter is expected, not alarming.
+    let pace = null, paceWarming = false;
+    if (elapsedFrac != null && elapsedFrac > 0) {
       pace = (used / 100) / elapsedFrac;
+      paceWarming = elapsedFrac < 0.10;
     }
 
     // Pace bucket: icon + label + its OWN color (independent of the bolinha).
@@ -444,6 +449,8 @@ async function main() {
     badge += RESET;
     if (paceX != null) {
       badge += `${SEP}${paceColor}${paceIcon} ${paceLabel} ${paceX}×${RESET}`;
+      // "warming" suffix in dim — the number is live but still settling.
+      if (paceWarming) badge += ` ${DIM}warming${RESET}`;
     }
     rlBadge = badge;
   }

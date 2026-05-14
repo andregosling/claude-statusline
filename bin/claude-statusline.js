@@ -115,8 +115,12 @@ function cmdExplain() {
   P(`  ${rgb(255,203,107)}🏃 fast${r}    ${d}1.1-1.5×${r}  Acelerado, segura um pouco`);
   P(`  ${cCtxHot}🔥 hot${r}     ${d}>1.5×${r}     Vai bater o teto cedo\n`);
   P(`${d}  A bolinha ● tem cor SEPARADA — reflete só o % de uso bruto do limite${r}`);
-  P(`${d}  (verde <50% · âmbar 50-79% · vermelho ≥80%), ignora o tempo.${r}`);
-  P(`${d}  O pace só aparece depois de ~30min de janela (antes é ruído).${r}\n`);
+  P(`${d}  (verde <50% · âmbar 50-79% · vermelho ≥80%), ignora o tempo.${r}\n`);
+
+  P(`  ${rgb(255,203,107)}🏃 fast 1.4× ${d}warming${r}   ${d}Nos primeiros ~30min da janela o pace vem com${r}`);
+  P(`${d}  o sufixo "warming": o número é real, mas o denominador (tempo decorrido)${r}`);
+  P(`${d}  ainda é minúsculo, então ele oscila a cada render. Depois de ~30min${r}`);
+  P(`${d}  estabiliza e o "warming" some sozinho.${r}\n`);
 
   P(`${d}Exemplo: usou 30% do limite em 1h da janela. Pace = 0.30÷0.20 = 1.5× → 🏃 fast 1.5×${r}`);
   P(`${d}         Tradução: nesse ritmo, bate 100% em ~3h20.${r}\n`);

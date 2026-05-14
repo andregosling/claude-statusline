@@ -107,7 +107,13 @@ O número que aparece é um **multiplicador**:
 
 **Exemplo 2:** usou 60% em 4h. Pace = `0.60 ÷ 0.80 = 0.75×` → `🐢 chill 0.8×`. Tradução: tem orçamento sobrando pra última hora.
 
-**Nota:** nos primeiros ~30min da janela (10% dela), o pace fica oculto — com tão pouco tempo decorrido o número é puro ruído (uma mensagem já dispara 5×, 10×). A bolinha continua aparecendo normalmente.
+### `🏃 fast 1.4× warming` — o sufixo **warming**
+
+Nos primeiros ~30min da janela de 5h (10% dela), o pace aparece com o sufixo apagado **`warming`**. Quer dizer: **o número é real, mas ainda está se acomodando — vai oscilar.**
+
+Por quê oscila? A fórmula é `uso ÷ tempo_decorrido`. No comecinho da janela, o "tempo decorrido" é minúsculo, então **qualquer mudancinha no uso vira um salto gigante** no resultado. Uma única resposta longa pode chutar o pace de `0.5×` pra `2.0×` e de volta — não porque seu ritmo mudou, mas porque dividir por um número quase-zero amplifica tudo. É como tentar estimar a velocidade média de uma viagem olhando só os 2 primeiros metros.
+
+Versões antigas **escondiam** o pace nesse período — o que confundia (parecia que tinha quebrado). Agora ele aparece sempre; o `warming` é só o aviso de "não leve o número ao pé da letra ainda". Depois de ~30min de janela o denominador já é grande o suficiente, o número estabiliza, e o `warming` some sozinho.
 
 ---
 
