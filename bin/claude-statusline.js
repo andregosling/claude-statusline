@@ -111,11 +111,14 @@ function cmdExplain() {
   P(`${d}  pace = uso_atual ÷ tempo_decorrido (ambos como fração da janela de 5h)${r}`);
   P(`${d}  1.0× = ritmo perfeito · <1.0× = folga · >1.0× = vai bater o teto cedo${r}\n`);
   P(`  ${cCtxOk}🐢 chill${r}   ${d}<0.7×${r}     Bastante folga, pode gastar à vontade`);
-  P(`  ${cCtxOk}🚶 ok${r}      ${d}0.7-0.99×${r} No ritmo`);
-  P(`  ${rgb(255,203,107)}🏃 fast${r}    ${d}1.0-1.29×${r} Acelerado, segura um pouco`);
-  P(`  ${cCtxHot}🔥 hot${r}     ${d}≥1.3×${r}     Vai bater o teto cedo\n`);
+  P(`  ${cCtxOk}🚶 ok${r}      ${d}0.7-1.1×${r}  No ritmo`);
+  P(`  ${rgb(255,203,107)}🏃 fast${r}    ${d}1.1-1.5×${r}  Acelerado, segura um pouco`);
+  P(`  ${cCtxHot}🔥 hot${r}     ${d}>1.5×${r}     Vai bater o teto cedo\n`);
+  P(`${d}  A bolinha ● tem cor SEPARADA — reflete só o % de uso bruto do limite${r}`);
+  P(`${d}  (verde <50% · âmbar 50-79% · vermelho ≥80%), ignora o tempo.${r}`);
+  P(`${d}  O pace só aparece depois de ~30min de janela (antes é ruído).${r}\n`);
 
-  P(`${d}Exemplo: usou 30% do limite em 1h da janela. Pace = 0.30÷0.20 = 1.5× → 🔥 hot 1.5×${r}`);
+  P(`${d}Exemplo: usou 30% do limite em 1h da janela. Pace = 0.30÷0.20 = 1.5× → 🏃 fast 1.5×${r}`);
   P(`${d}         Tradução: nesse ritmo, bate 100% em ~3h20.${r}\n`);
 
   P(`${b}MAIS${r}`);

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Two-line dashboard status line for Claude Code.
 // Works on macOS, Linux, and Windows with zero external dependencies (only Node, which Claude Code already ships).
-// VERSION: 2.5.0
+// VERSION: 2.6.0
 // REPO: https://github.com/andregosling/claude-statusline
 
 'use strict';
@@ -12,7 +12,7 @@ const path = require('path');
 const { execSync, spawn } = require('child_process');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const VERSION = '2.5.0';
+const VERSION = '2.6.0';
 const REPO_RAW = 'https://raw.githubusercontent.com/andregosling/claude-statusline/main';
 const CACHE_DIR = path.join(os.homedir(), '.claude', 'cache', 'claude-statusline');
 const LAST_CHECK = path.join(CACHE_DIR, 'last-check');
@@ -389,13 +389,17 @@ async function main() {
   const SEP = `${C.rule} · ${RESET}`;
 
   // ── 5h rate-limit + pace indicator ──────────────────────────────────────────
-  // "Pace" = how fast you're burning the 5h budget relative to clock time.
-  //   pace = used_fraction / elapsed_fraction
-  //   pace < 1.0  → using budget slower than time passing (room to spend)
-  //   pace = 1.0  → exactly on track to hit 100% at reset
-  //   pace > 1.0  → burning faster than time; you'll hit the cap early
-  // The bolinha's color reflects PACE (not raw %), so green = you're chill,
-  // even if you've already used 70% — as long as the window is mostly elapsed.
+  // Two INDEPENDENT signals here — don't conflate them:
+  //
+  //   ● bolinha  → color from RAW USAGE only (% of the 5h budget spent).
+  //                Ignores time entirely. 5% used = green, period.
+  //                green <50 · amber 50-79 · red ≥80.
+  //
+  //   pace badge → "how fast am I burning vs how much time has passed".
+  //                pace = used_fraction / elapsed_fraction
+  //                  1.0× = on track to hit 100% exactly at reset
+  //                  <1.0× = headroom · >1.0× = will hit the cap early
+  //                Has its OWN color, separate from the bolinha.
   let rlBadge = '';
   if (rl5 != null && rl5 !== 'null') {
     const used = Number(rl5) || 0;                 // 0–100, % of 5h budget used
@@ -412,40 +416,34 @@ async function main() {
       }
     }
 
-    // Pace metric — only meaningful once a little time has elapsed (avoid div-by-zero
-    // spikes in the first seconds of a fresh window).
+    // Bolinha color — RAW USAGE only, time-independent.
+    const dotColor = used >= 80 ? C.ctxHot : used >= 50 ? C.ctxWarn : C.ctxOk;
+
+    // Pace — only meaningful once enough of the window has elapsed. In the first
+    // ~10% (~30min) the ratio is pure noise (tiny denominator), so we hide it.
     let pace = null;
-    if (elapsedFrac != null && elapsedFrac > 0.02) {
+    if (elapsedFrac != null && elapsedFrac >= 0.10) {
       pace = (used / 100) / elapsedFrac;
     }
 
-    // Bucket: pick icon + label + color from pace.
-    // Thresholds tuned so that "ok" covers the natural ±15% noise around even pacing.
-    let icon = '', label = '', dotColor = C.ctxOk;
-    if (pace == null) {
-      // No timing data yet — fall back to raw used color, no pace badge.
-      icon = '';
-      label = '';
-      dotColor = used >= 80 ? C.ctxHot : used >= 50 ? C.ctxWarn : C.ctxOk;
-    } else if (pace < 0.7) {
-      icon = '🐢'; label = 'chill';  dotColor = C.ctxOk;
-    } else if (pace < 1.0) {
-      icon = '🚶'; label = 'ok';     dotColor = C.ctxOk;
-    } else if (pace < 1.3) {
-      icon = '🏃'; label = 'fast';   dotColor = C.ctxWarn;
-    } else {
-      icon = '🔥'; label = 'hot';    dotColor = C.ctxHot;
+    // Pace bucket: icon + label + its OWN color (independent of the bolinha).
+    // 1.0× exactly counts as "ok" (on track), not "fast".
+    let paceIcon = '', paceLabel = '', paceColor = C.ctxOk;
+    if (pace != null) {
+      if (pace < 0.7)        { paceIcon = '🐢'; paceLabel = 'chill'; paceColor = C.ctxOk;   }
+      else if (pace <= 1.1)  { paceIcon = '🚶'; paceLabel = 'ok';    paceColor = C.ctxOk;   }
+      else if (pace <= 1.5)  { paceIcon = '🏃'; paceLabel = 'fast';  paceColor = C.ctxWarn; }
+      else                   { paceIcon = '🔥'; paceLabel = 'hot';   paceColor = C.ctxHot;  }
     }
 
-    // Format pace as a multiplier (1.0× = exactly on track). "×" makes it read
-    // as a rate, not a usage percentage, which users found ambiguous.
+    // Format pace as a multiplier (1.0× = exactly on track).
     const paceX = pace != null ? pace.toFixed(1) : null;
 
     let badge = `${SEP}${dotColor}●${RESET} ${C.label}5h`;
     if (resetStr) badge += ` · resets in ${resetStr}`;
     badge += RESET;
     if (paceX != null) {
-      badge += `${SEP}${dotColor}${icon} ${label} ${paceX}×${RESET}`;
+      badge += `${SEP}${paceColor}${paceIcon} ${paceLabel} ${paceX}×${RESET}`;
     }
     rlBadge = badge;
   }

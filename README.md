@@ -131,28 +131,39 @@ Substitui todos os glyphs de Nerd Font por equivalentes ASCII (`◆`, `+`, `↑`
 | Duração |  `18m03s` | Tempo de wall-clock da sessão |
 | Context |  `███████░░░ 73%` | Verde <50%, âmbar 50-79%, vermelho ≥80% |
 | Linhas | `+156/-23` | Só aparece quando você editou algo |
-| Rate limit 5h | 🟢 `5h · resets in 2h14m · 🚶 ok 0.9×` | Bolinha + countdown + **pace** (multiplicador de ritmo — 1.0× = no ritmo) |
+| Rate limit 5h | 🟢 `5h · resets in 2h14m · 🚶 ok 0.9×` | Bolinha (cor = % de uso bruto) + countdown + **pace** (cor própria) |
 
-### Pace: como ler
+### Bolinha vs Pace — duas métricas independentes
 
-O multiplicador `×` diz **quão rápido você está queimando o orçamento de 5h** comparado com o tempo passando:
+São **duas coisas diferentes**, com cores separadas:
 
-- **1.0×** = ritmo perfeito (você zera o orçamento exatamente no momento do reset)
-- **< 1.0×** = gastando devagar, tem folga 🟢 (ex: `0.5×` = metade do ritmo)
-- **> 1.0×** = gastando rápido, vai bater o teto antes 🟡 / 🔴 (ex: `2.0×` = queimando o dobro)
+**Bolinha `●`** — cor baseada **só no % de uso bruto** do limite de 5h, ignora o tempo:
+- 🟢 verde — usou < 50%
+- 🟡 âmbar — usou 50–79%
+- 🔴 vermelho — usou ≥ 80%
 
-Buckets:
+Usou 5% do limite? Bolinha verde, sempre — não importa o pace.
+
+**Pace `🏃 fast 1.5×`** — diz **quão rápido você está queimando** comparado com o tempo passando:
+
+- **1.0×** = ritmo perfeito (zera o orçamento exatamente no reset)
+- **< 1.0×** = gastando devagar, tem folga (ex: `0.5×` = metade do ritmo)
+- **> 1.0×** = gastando rápido, vai bater o teto antes (ex: `2.0×` = queimando o dobro)
+
+Buckets do pace (cor própria, separada da bolinha):
 
 | Pace | Ícone | Cor | Significa |
 |---|---|---|---|
 | < 0.7× | 🐢 chill | verde | bastante folga, pode gastar à vontade |
-| 0.7–0.99× | 🚶 ok | verde | exatamente no ritmo |
-| 1.0–1.29× | 🏃 fast | âmbar | acelerado, segura um pouco |
-| ≥ 1.3× | 🔥 hot | vermelho | muito acima, vai bater o teto |
+| 0.7–1.1× | 🚶 ok | verde | no ritmo (1.0× exato cai aqui) |
+| 1.1–1.5× | 🏃 fast | âmbar | acelerado, segura um pouco |
+| > 1.5× | 🔥 hot | vermelho | muito acima, vai bater o teto |
 
-**Exemplo**: você usou 30% do limite em 1h dentro da janela de 5h. Pace = `0.3 ÷ 0.2 = 1.5×` → `🔥 hot 1.5×`. Tradução: nesse ritmo você bate o teto em ~3h20, então segura.
+**Exemplo**: usou 30% do limite em 1h dentro da janela de 5h. Pace = `0.3 ÷ 0.2 = 1.5×` → `🏃 fast 1.5×`. Tradução: nesse ritmo você bate o teto em ~3h20, então segura.
 
 Outro: usou 60% em 4h. Pace = `0.6 ÷ 0.8 = 0.75×` → `🐢 chill 0.8×`. Tradução: tem orçamento sobrando pra última hora.
+
+O pace só aparece depois de ~30min de janela — antes disso o número é ruído (a bolinha continua aparecendo normalmente).
 
 ---
 
