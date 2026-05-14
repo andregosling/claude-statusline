@@ -95,12 +95,13 @@ function cmdExplain() {
   P(`  ${cLabel}high/med/low${r}    Effort level (se setado em settings.json)`);
   P(`  ${cLabel}wt:feature-x${r}    Worktree atual (se aplicável)\n`);
 
-  P(`${cRule}╰─${r}  ${cCost} $0.42${r}  ${cRule}·${r}  ${cTok} 8.0k ↑ · 1.2k ↓${r}  ${cRule}·${r}  ${cCtxOk} ███████░░░ 73%${r}  ${cRule}·${r}  ${cCtxOk}● 5h · resets in 2h14m${r}  ${cRule}·${r}  ${cCtxHot}🔥 hot 1.5×${r}\n`);
+  P(`${cRule}╰─${r}  ${cCost} $0.42${r}  ${cRule}·${r}  ${cTok} 219.4k ctx · last +187${r}  ${cRule}·${r}  ${cCtxOk} ███████░░░ 73%${r}  ${cRule}·${r}  ${cCtxOk}● 5h · resets in 2h14m${r}  ${cRule}·${r}  ${cCtxHot}🔥 hot 1.5×${r}\n`);
 
   P(`${b}LINHA 2 — Métricas${r}`);
-  P(`  ${cCost} $0.42${r}        Custo total da sessão em USD`);
-  P(`  ${cTok} 8.0k ↑ · 1.2k ↓${r}  Tokens enviados (↑ input, inclui system prompt) / recebidos (↓ output)`);
-  P(`  ${d}18m03s${r}        Duração da sessão`);
+  P(`  ${cCost} $0.42${r}                Custo total da sessão em USD`);
+  P(`  ${cTok} 219.4k ctx${r}           Tamanho atual do contexto (system prompt + tools + histórico)`);
+  P(`  ${cLabel}last +187${r}              Output do ÚLTIMO turno só (snapshot — o CC não dá total acumulado)`);
+  P(`  ${d}18m03s${r}                Duração da sessão`);
   P(`  ${cCtxOk}██░░ 73%${r}    Context window — verde <50%, âmbar 50-79%, vermelho ≥80%`);
   P(`  ${cGit}+156${r}/${rgb(240,113,120)}-23${r}     Linhas adicionadas/removidas nessa sessão`);
   P(`  ${cCtxOk}●${r} 5h · ...   Rate limit do plano (janela de 5h), com countdown até reset\n`);

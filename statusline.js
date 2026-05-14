@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Two-line dashboard status line for Claude Code.
 // Works on macOS, Linux, and Windows with zero external dependencies (only Node, which Claude Code already ships).
-// VERSION: 2.4.0
+// VERSION: 2.5.0
 // REPO: https://github.com/andregosling/claude-statusline
 
 'use strict';
@@ -12,10 +12,11 @@ const path = require('path');
 const { execSync, spawn } = require('child_process');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const VERSION = '2.4.0';
+const VERSION = '2.5.0';
 const REPO_RAW = 'https://raw.githubusercontent.com/andregosling/claude-statusline/main';
 const CACHE_DIR = path.join(os.homedir(), '.claude', 'cache', 'claude-statusline');
 const LAST_CHECK = path.join(CACHE_DIR, 'last-check');
+const LAST_SESSION = path.join(CACHE_DIR, 'last-session');
 const REMOTE_VERSION_CACHE = path.join(CACHE_DIR, 'remote-version');
 const UPDATE_LOG = path.join(CACHE_DIR, 'update.log');
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24h
@@ -50,22 +51,19 @@ const PLAIN = process.env.CLAUDE_STATUSLINE_PLAIN === '1';
 const G = PLAIN ? {
   folder: '', branch: 'git:', add: '+', mod: '~', del: '-',
   ahead: '↑', behind: '↓', model: '◆', cost: '$', token: 'T',
-  tokIn: '^', tokOut: 'v',
   clock: 't:', ctx: 'ctx', rate: '*', tl: '╭─', bl: '╰─',
 } : {
-  folder: '',     //
-  branch: '',     //
+  folder: '',     //
+  branch: '',     //
   add: '+', mod: '~', del: '−',
-  ahead: '',      //
-  behind: '',     //
+  ahead: '',      //
+  behind: '',     //
   model: '\u{F06A9}',   // 󰚩
-  cost: '',       //
-  token: '',      //
-  tokIn: '↑',
-  tokOut: '↓',
-  clock: '',      //
-  ctx: '',        //
-  rate: '',       //
+  cost: '',       //
+  token: '',      //
+  clock: '',      //
+  ctx: '',        //
+  rate: '',       //
   tl: '╭─', bl: '╰─',
 };
 
@@ -196,12 +194,28 @@ function modelDisplay(id, display) {
 }
 
 // ── Auto-update (fork-and-forget) ─────────────────────────────────────────────
-function maybeScheduleUpdate() {
+// Triggers a background check when EITHER:
+//   - the session_id is new (Claude Code restarted / fresh session opened), or
+//   - more than 24h passed since the last check (covers marathon sessions).
+// Within the same session it never re-checks more than once per 24h, so no flood.
+function maybeScheduleUpdate(sessionId) {
   try {
     fs.mkdirSync(CACHE_DIR, { recursive: true });
+
+    let lastSession = '';
+    try { lastSession = fs.readFileSync(LAST_SESSION, 'utf8').trim(); } catch {}
+    const newSession = sessionId && sessionId !== lastSession;
+
     let last = 0;
     try { last = Number(fs.readFileSync(LAST_CHECK, 'utf8')) || 0; } catch {}
-    if (Date.now() - last < CHECK_INTERVAL_MS) return;
+    const stale = Date.now() - last >= CHECK_INTERVAL_MS;
+
+    // Remember this session so we don't re-trigger on every render within it.
+    if (sessionId) {
+      try { fs.writeFileSync(LAST_SESSION, sessionId); } catch {}
+    }
+
+    if (!newSession && !stale) return;
     fs.writeFileSync(LAST_CHECK, String(Date.now()));
 
     // Detach a background child that downloads + replaces self.
@@ -329,6 +343,7 @@ async function main() {
     try { payload = JSON.parse(raw); } catch {}
   }
 
+  const sessionId = pick(payload, 'session_id', '');
   const cwd = pick(payload, 'workspace.current_dir') || pick(payload, 'cwd') || process.cwd();
   const modelId = pick(payload, 'model.id', '');
   const modelName = pick(payload, 'model.display_name', '');
@@ -346,11 +361,16 @@ async function main() {
 
   const pathStr = prettyPath(cwd);
   const gitStr = gitSegment(cwd);
-  // Sent (input) and received (output) tokens, accumulated over the session.
-  // Note: "sent" includes the Claude Code system prompt + tool definitions, so a
-  // single "oi" still shows ~8k — that overhead is real, not a bug.
-  const tokIn = Number(ctxIn) || 0;
-  const tokOut = Number(ctxOut) || 0;
+  // IMPORTANT: Claude Code's context_window fields are PER-TURN SNAPSHOTS, not
+  // session cumulatives (confirmed via docs). So:
+  //   total_input_tokens  = size of the context currently sent to the model
+  //                         (system prompt + tools + full history). This is the
+  //                         meaningful "how full is the context" number.
+  //   total_output_tokens = output of the MOST RECENT turn only — tiny, changes
+  //                         every render. Labelled "last" so it's not mistaken
+  //                         for a session total (which CC simply doesn't expose).
+  const ctxTokens = Number(ctxIn) || 0;
+  const lastOut = Number(ctxOut) || 0;
   const ctxC = ctxColor(ctxPct);
   const bar = ctxBar(ctxPct);
   const modelStr = modelDisplay(modelId, modelName);
@@ -434,16 +454,19 @@ async function main() {
   if (gitStr) line1 += `${SEP}${gitStr}`;
   line1 += `${SEP}${C.model}${G.model} ${modelStr}${RESET}${effortBadge}${wtBadge}`;
 
+  // Tokens segment: "219.4k ctx · last +187"
+  //   "219.4k ctx" = current context window size (the meaningful number)
+  //   "last +187"  = output of the most recent turn (snapshot — NOT a session total)
   const line2 = `${C.rule}${G.bl}${RESET} ${C.cost}${G.cost} ${fmtCost(cost)}${RESET}${SEP}` +
-    `${C.tokens}${G.token} ${fmtTokens(tokIn)} ${G.tokIn} ${C.rule}·${RESET} ${C.tokens}${fmtTokens(tokOut)} ${G.tokOut}${RESET}${SEP}` +
+    `${C.tokens}${G.token} ${fmtTokens(ctxTokens)} ctx${RESET} ${C.rule}·${RESET} ${C.label}last +${fmtTokens(lastOut)}${RESET}${SEP}` +
     `${C.time}${G.clock} ${fmtDuration(durMs)}${RESET}${SEP}` +
     `${ctxC}${G.ctx} ${bar} ${Math.floor(Number(ctxPct) || 0)}%${RESET}` +
     `${linesBadge}${rlBadge}${updateBadge()}${helpLink()}`;
 
   process.stdout.write(line1 + '\n' + line2 + '\n');
 
-  // Fire-and-forget background update check
-  maybeScheduleUpdate();
+  // Fire-and-forget background update check (triggers on new session or 24h elapsed)
+  maybeScheduleUpdate(sessionId);
 }
 
 main().catch(() => {

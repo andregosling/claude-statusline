@@ -37,20 +37,20 @@ Indicador de worktree. Só aparece se você estiver dentro de um worktree do Cla
 ## Linha 2 — Métricas
 
 ```
-╰─  $0.42 ·  8.0k ↑ · 1.2k ↓ ·  18m03s ·  ███████░░░ 73%  +156/-23 · 🟢 5h · resets in 2h14m · 🔥 hot 1.5×
+╰─  $0.42 ·  219.4k ctx · last +187 ·  18m03s ·  ███████░░░ 73%  +156/-23 · 🟢 5h · resets in 2h14m · 🔥 hot 1.5×
 ```
 
 ### ` $0.42`
 Custo total em USD dessa sessão (vem do campo `cost.total_cost_usd` do Claude Code).
 
-### ` 8.0k ↑ · 1.2k ↓` — tokens enviados / recebidos
+### ` 219.4k ctx · last +187` — tamanho do contexto / output do último turno
 
-Tokens acumulados da sessão, separados por direção:
+Aqui tem uma sutileza importante. O Claude Code **não fornece contadores acumulados** de tokens da sessão — os campos `context_window` são **snapshots do turno atual**. Então o statusline mostra o que dá pra mostrar de forma honesta:
 
-- **`↑` enviados (input)** — tudo que vai pro modelo: o **system prompt do Claude Code** + definições de ferramentas + CLAUDE.md + toda a sua conversa. Por isso um simples "oi" já mostra `~8k ↑` — esse overhead é real, não é bug. É o custo fixo de qualquer sessão.
-- **`↓` recebidos (output)** — só o que o Claude gerou em resposta. Esse número é "puro".
+- **`219.4k ctx`** — o tamanho do contexto **agora**: system prompt do Claude Code + definições de ferramentas + CLAUDE.md + todo o histórico da conversa. É o número que importa — "quão cheio está o contexto". Por isso até um "oi" já mostra `~8k ctx`: esse overhead é real, é o custo fixo de qualquer sessão.
+- **`last +187`** — output **só do último turno** (`total_output_tokens`). Muda a cada resposta. É labelado "last" de propósito, pra você não confundir com um total de sessão (que o Claude Code simplesmente não expõe).
 
-**Por que não tem "tokens da minha conversa" separado?** Porque o Claude Code não fornece esse dado — ele não separa "seu texto" do system prompt no campo de input. O que dá pra mostrar de forma honesta é a direção: enviado vs recebido.
+**Por que não tem "total de tokens da sessão" ou "tokens da minha conversa"?** Porque o Claude Code não fornece esses dados. Os campos são snapshots por turno, não acumulados. O statusline mostra `ctx` (útil) e `last` (honesto sobre o que é) em vez de inventar um "total" que seria mentira.
 
 ### ` 18m03s`
 Wall-clock da sessão. Quanto tempo passou desde que você abriu o Claude Code.

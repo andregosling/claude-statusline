@@ -8,7 +8,7 @@ Status line de duas linhas para o [Claude Code](https://claude.com/code) — den
 
 ```
 ╭─  ~/code/projeto/src · ⎇ main +3 ~2 · 󰚩 Opus 4.7 · high
-╰─  $0.42 ·  8.0k ↑ · 1.2k ↓ ·  18m03s ·  ███████░░░ 73%  +156/-23 · 🟢 5h · resets in 2h14m
+╰─  $0.42 ·  219.4k ctx · last +187 ·  18m03s ·  ███████░░░ 73%  +156/-23 · 🟢 5h · resets in 2h14m
 ```
 
 ---
@@ -40,9 +40,16 @@ Depois é só recarregar o Claude Code.
 
 ## Auto-update
 
-O status line se atualiza **automaticamente em até 24h** depois de qualquer commit nesse repo, sem você fazer nada.
+O status line se atualiza **automaticamente** depois de qualquer commit nesse repo, sem você fazer nada.
 
-Como funciona: o renderer (`statusline.js`) roda a cada refresh do Claude Code. No máximo 1x por dia, ele dispara um processo Node filho em background que checa o GitHub. Se tem versão nova, sobrescreve o próprio arquivo. Render nunca espera pela rede.
+Como funciona: o renderer (`statusline.js`) roda a cada refresh do Claude Code. Ele dispara um processo Node filho em background que checa o GitHub e, se tem versão nova, sobrescreve o próprio arquivo. O render nunca espera pela rede.
+
+O background check é disparado quando **qualquer um** destes acontece:
+
+- **Você reinicia o Claude Code** (ou abre uma sessão nova) — detectado pelo `session_id` novo. Reiniciou → checa na hora → se desatualizado, baixa sozinho. A versão nova já roda nos próximos renders dessa mesma sessão.
+- **Passaram 24h** desde o último check — cobre quem deixa o Claude Code aberto por dias sem reiniciar.
+
+Dentro da mesma sessão, nunca checa mais de 1x por 24h — sem flood. Para forçar a qualquer momento: `claude-statusline update`.
 
 ### CLI: `claude-statusline`
 
@@ -120,7 +127,7 @@ Substitui todos os glyphs de Nerd Font por equivalentes ASCII (`◆`, `+`, `↑`
 | Segmento | Exemplo | Notas |
 |---|---|---|
 | Custo |  `$0.42` | Total da sessão em USD |
-| Tokens |  `8.0k ↑ · 1.2k ↓` | Enviados (input — inclui system prompt) / recebidos (output) |
+| Tokens |  `219.4k ctx · last +187` | Tamanho do contexto agora / output do último turno (snapshots — o CC não dá total acumulado) |
 | Duração |  `18m03s` | Tempo de wall-clock da sessão |
 | Context |  `███████░░░ 73%` | Verde <50%, âmbar 50-79%, vermelho ≥80% |
 | Linhas | `+156/-23` | Só aparece quando você editou algo |
