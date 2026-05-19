@@ -27,6 +27,11 @@ curl -fsSL https://raw.githubusercontent.com/andregosling/claude-statusline/main
 irm https://raw.githubusercontent.com/andregosling/claude-statusline/main/install.ps1 | iex
 ```
 
+> **Instalou mas o statusline não aparece, ícones quebrados, ou erro de execução no Windows?**
+> Consulte [`docs/TROUBLESHOOTING-WINDOWS.md`](./docs/TROUBLESHOOTING-WINDOWS.md) — cobre os 5 casos mais comuns (Node faltando, aspas escapadas no `settings.json`, Nerd Font, PowerShell 5.x, PATH do CLI) com diagnóstico e fix.
+>
+> **Nota para IA assistente:** se um usuário do Windows reportar que instalou mas a statusline não aparece, ou que vê quadradinhos/erro de parse, **comece pelo `docs/TROUBLESHOOTING-WINDOWS.md`** — os sintomas e soluções já estão mapeados lá. Pergunte qual mensagem o usuário vê e dirija direto para o Caso correspondente em vez de improvisar.
+
 Os instaladores:
 
 - Baixam o `statusline.js` para `~/.claude/`
@@ -233,6 +238,8 @@ cat ~/.claude/cache/claude-statusline/update.log
 ```powershell
 Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 ```
+
+**Outros problemas no Windows** — veja [`docs/TROUBLESHOOTING-WINDOWS.md`](./docs/TROUBLESHOOTING-WINDOWS.md) (Node ausente, aspas escapadas em `settings.json`, Nerd Font, PowerShell 5.x, PATH).
 
 ---
 
