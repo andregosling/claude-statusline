@@ -401,6 +401,178 @@ function helpLink() {
   return `${SEP}${C.label}${open}(?)${close}${RESET}`;
 }
 
+// Bloco "twt metrics" com dois indicadores de saúde de ingestão + um ? clicável:
+//   stats = pipeline do statusline/heartbeat (custo, rate-limit, contexto)
+//   otel  = pipeline OpenTelemetry (Claude Code → /v1/*: tools, tokens/turno, erros)
+// Estado vem do cache escrito pelo bg-heartbeat (resposta do POST). Cores:
+//   verde = chegando OK · amarelo = ainda sem dado/desconhecido · vermelho = não chega.
+function ingestHealthBadge() {
+  if (TELEMETRY_DISABLED) return '';
+  if (process.env.CLAUDE_STATUSLINE_NO_INGEST_BADGE === '1') return '';
+  if (!loadToken()) return ''; // sem pareamento, o auth banner já cobre
+
+  let h = null;
+  try { h = JSON.parse(fs.readFileSync(INGEST_HEALTH_CACHE, 'utf8')); } catch {}
+
+  const SEP = `${C.rule} · ${RESET}`;
+  const gStats = PLAIN ? '' : '\u{F0954} '; // 󰥔 pulso
+  const gOtel = PLAIN ? '' : '\u{F02A4} ';  // 󰊤 antena/broadcast
+
+  const statsColor = h?.manual_ingest_ok ? C.ctxOk : C.ctxWarn;
+  const stats = `${statsColor}${gStats}stats${RESET}`;
+
+  let otelColor;
+  if (h == null) otelColor = C.ctxWarn;
+  else otelColor = h.otel_ingest_ok ? C.ctxOk : C.gitGone;
+  const otel = `${otelColor}${gOtel}otel${RESET}`;
+
+  return `${SEP}${C.label}twt metrics:${RESET} ${stats}${C.rule} · ${RESET}${otel}${ingestHelpLink()}`;
+}
+
+// ? clicável (OSC 8) que aponta pro .html de legenda — gerado on-demand.
+function ingestHelpLink() {
+  if (process.env.CLAUDE_STATUSLINE_NO_HELP === '1') return '';
+  try { writeIngestHelpHtml(); } catch {}
+  const BEL = '\x07';
+  const open = `${ESC}]8;;file://${INGEST_HELP_HTML}${BEL}`;
+  const close = `${ESC}]8;;${BEL}`;
+  return ` ${C.label}${open}(?)${close}${RESET}`;
+}
+
+// Gera o .html de legenda do "twt metrics" (standalone, zero deps, estética Linear).
+// Idempotente: só reescreve se o conteúdo mudou (compara com o arquivo atual).
+const INGEST_HELP_VERSION = 2;
+function writeIngestHelpHtml() {
+  const html = `<!doctype html>
+<html lang="pt-br" data-v="${INGEST_HELP_VERSION}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>twt metrics · indicadores de ingestão</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #08090c; --panel: #0e1014; --panel-2: #14161c;
+    --line: rgba(255,255,255,.07); --line-2: rgba(255,255,255,.04);
+    --txt: #f7f8f8; --txt-2: #9b9fa8; --txt-3: #6a6e78;
+    --accent: #7c84f2; --green: #4cc38a; --amber: #f2c94c; --red: #f56565;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  body { background: var(--bg); color: var(--txt); font-family: var(--sans); line-height: 1.5;
+    min-height: 100vh; padding: 80px 24px 64px; position: relative; overflow-x: hidden; }
+  body::before { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background: radial-gradient(680px 340px at 50% -8%, rgba(124,132,242,.16), transparent 70%),
+      radial-gradient(900px 500px at 85% 8%, rgba(76,195,138,.05), transparent 60%); }
+  .wrap { max-width: 720px; margin: 0 auto; position: relative; z-index: 1; }
+  .eyebrow { font-family: var(--mono); font-size: 11.5px; letter-spacing: .18em; text-transform: uppercase;
+    color: var(--txt-3); margin-bottom: 18px; display: flex; align-items: center; gap: 9px;
+    animation: rise .6s cubic-bezier(.2,.7,.2,1) both; }
+  .eyebrow .led { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+  h1 { font-size: 34px; font-weight: 600; letter-spacing: -.025em; line-height: 1.1; margin-bottom: 14px;
+    animation: rise .6s cubic-bezier(.2,.7,.2,1) .05s both; }
+  h1 .grad { background: linear-gradient(95deg, #fff, #9ea4f5); -webkit-background-clip: text;
+    background-clip: text; -webkit-text-fill-color: transparent; }
+  .lead { font-size: 16.5px; color: var(--txt-2); max-width: 56ch;
+    animation: rise .6s cubic-bezier(.2,.7,.2,1) .1s both; }
+  .mock { margin: 34px 0 44px; border-radius: 12px; overflow: hidden; border: 1px solid var(--line);
+    background: var(--panel); box-shadow: 0 24px 60px -28px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,.03);
+    animation: rise .7s cubic-bezier(.2,.7,.2,1) .15s both; }
+  .mock-bar { display: flex; align-items: center; gap: 7px; padding: 11px 14px; background: var(--panel-2);
+    border-bottom: 1px solid var(--line-2); }
+  .tl { width: 11px; height: 11px; border-radius: 50%; }
+  .tl.r { background: #ff5f57; } .tl.y { background: #febc2e; } .tl.g { background: #28c840; }
+  .mock-bar .ttl { margin-left: 8px; font-family: var(--mono); font-size: 11.5px; color: var(--txt-3); }
+  .mock-body { padding: 18px 20px; font-family: var(--mono); font-size: 13px; line-height: 1.9; }
+  .mock-body .l1 { color: var(--txt-3); }
+  .mock-body .l2 { color: var(--txt-2); display: flex; flex-wrap: wrap; align-items: center; gap: 0 4px; }
+  .mock .seg { color: var(--txt-3); } .mock .lbl { color: var(--txt-2); }
+  .mock .ind { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
+  .mock .ind::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor;
+    box-shadow: 0 0 10px currentColor; }
+  .mock .ind.ok { color: var(--green); } .mock .ind.bad { color: var(--red); }
+  .mock .q { color: var(--accent); cursor: help; }
+  .callout { margin-top: 13px; font-size: 12.5px; color: var(--txt-3); font-family: var(--mono); }
+  .callout b { color: var(--txt-2); font-weight: 500; }
+  .card { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 26px 26px 22px;
+    margin-bottom: 16px; position: relative; transition: border-color .25s, transform .25s;
+    animation: rise .6s cubic-bezier(.2,.7,.2,1) both; }
+  .card:nth-of-type(1) { animation-delay: .22s; } .card:nth-of-type(2) { animation-delay: .3s; }
+  .card:hover { border-color: rgba(255,255,255,.13); transform: translateY(-1px); }
+  .card::before { content: ""; position: absolute; left: 26px; right: 26px; top: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--card-accent), transparent); opacity: .5; }
+  .card.stats { --card-accent: var(--accent); } .card.otel { --card-accent: var(--green); }
+  .card-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .chip { font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: .02em; padding: 4px 11px;
+    border-radius: 7px; color: var(--txt); border: 1px solid var(--card-accent);
+    background: color-mix(in srgb, var(--card-accent) 12%, transparent); }
+  .card-head h2 { font-size: 18px; font-weight: 600; letter-spacing: -.01em; }
+  .card > p { color: var(--txt-2); font-size: 14.5px; margin-bottom: 20px; }
+  .card > p b { color: var(--txt); font-weight: 600; }
+  .card > p i { color: var(--txt); font-style: normal; border-bottom: 1px dashed var(--txt-3); }
+  .states { display: flex; flex-direction: column; gap: 2px; }
+  .state { display: grid; grid-template-columns: 16px 64px 1fr; align-items: start; gap: 14px; padding: 11px 12px;
+    border-radius: 10px; transition: background .2s; }
+  .state:hover { background: var(--line-2); }
+  .state .dot { width: 11px; height: 11px; border-radius: 50%; margin-top: 5px; background: var(--c);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 18%, transparent), 0 0 14px var(--c); position: relative; }
+  .state.live .dot::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--c);
+    animation: pulse 2s ease-out infinite; }
+  .state .name { font-weight: 600; font-size: 14px; color: var(--c-txt); padding-top: 1px; }
+  .state .desc { color: var(--txt-2); font-size: 14px; }
+  .state .desc b { color: var(--txt); font-weight: 600; }
+  .g { --c: var(--green); --c-txt: #6fdca6; } .y { --c: var(--amber); --c-txt: #f4d06a; } .rd { --c: var(--red); --c-txt: #f88; }
+  .foot { margin-top: 40px; padding-top: 22px; border-top: 1px solid var(--line-2); color: var(--txt-3);
+    font-size: 12.5px; text-align: center; animation: rise .6s ease .4s both; }
+  .foot code { font-family: var(--mono); background: var(--panel-2); border: 1px solid var(--line); padding: 2px 7px;
+    border-radius: 6px; color: var(--txt-2); font-size: 11.5px; }
+  @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+  @keyframes pulse { 0% { transform: scale(1); opacity: .55; } 100% { transform: scale(3.2); opacity: 0; } }
+  @media (max-width: 560px) { body { padding: 48px 16px; } h1 { font-size: 27px; }
+    .state { grid-template-columns: 16px 1fr; } .state .name, .state .desc { grid-column: 2; } }
+</style>
+</head>
+<body><div class="wrap">
+  <div class="eyebrow"><span class="led"></span>twt metrics · status line</div>
+  <h1><span class="grad">Seus dados estão chegando?</span></h1>
+  <p class="lead">A status line mostra dois sinais de saúde lado a lado. Cada um vigia um caminho diferente pelo qual o seu uso do Claude chega ao servidor.</p>
+  <div class="mock">
+    <div class="mock-bar"><span class="tl r"></span><span class="tl y"></span><span class="tl g"></span><span class="ttl">claude — statusline</span></div>
+    <div class="mock-body">
+      <div class="l1">~/projeto  main  󰚩 opus</div>
+      <div class="l2"><span class="seg">╰─</span>&nbsp; $1.23 <span class="seg">·</span> 50k ctx <span class="seg">·</span> 40%
+        <span class="seg">&nbsp;·&nbsp;</span><span class="lbl">twt&nbsp;metrics:</span>
+        <span class="ind ok">stats</span> <span class="seg">·</span> <span class="ind bad">otel</span><span class="q">&nbsp;(?)</span></div>
+    </div>
+    <div class="callout">É o trecho <b>twt metrics: stats · otel</b> — e o <b>(?)</b> que abriu esta página.</div>
+  </div>
+  <div class="card stats">
+    <div class="card-head"><span class="chip">stats</span><h2>Heartbeat do statusline</h2></div>
+    <p>O ingest clássico: a cada ~60s a status line manda um resumo da sessão — <b>custo, rate-limit (5h / 7d), uso de contexto, linhas e repo</b>. É a fonte que o OpenTelemetry <i>não enxerga</i>.</p>
+    <div class="states">
+      <div class="state g live"><span class="dot"></span><span class="name">Verde</span><span class="desc">O último heartbeat foi <b>aceito</b> pelo servidor. Tudo certo.</span></div>
+      <div class="state y"><span class="dot"></span><span class="name">Amarelo</span><span class="desc">Ainda sem resposta recente — acabou de abrir, ou o servidor não respondeu.</span></div>
+    </div>
+  </div>
+  <div class="card otel">
+    <div class="card-head"><span class="chip">otel</span><h2>OpenTelemetry do Claude Code</h2></div>
+    <p>Telemetria <b>profunda</b>, emitida pelo próprio Claude Code: quais <b>tools, MCP e skills</b> rodaram, <b>tokens e custo por turno</b>, commits, PRs e <b>erros</b>. O statusline configura tudo sozinho — o servidor só confirma se está recebendo.</p>
+    <div class="states">
+      <div class="state g live"><span class="dot"></span><span class="name">Verde</span><span class="desc">O servidor recebeu eventos OTel seus na <b>última hora</b>. Funcionando.</span></div>
+      <div class="state y"><span class="dot"></span><span class="name">Amarelo</span><span class="desc">Estado ainda desconhecido — sem heartbeat recente para perguntar.</span></div>
+      <div class="state rd live"><span class="dot"></span><span class="name">Vermelho</span><span class="desc">O servidor <b>não</b> está recebendo OTel seu. Causa mais comum: <b>reinicie o Claude Code</b> — a config de OTel só ativa no restart. Se persistir, fale com o time.</span></div>
+    </div>
+  </div>
+  <p class="foot">claude-statusline · twt metrics &nbsp;·&nbsp; esconder os indicadores: <code>CLAUDE_STATUSLINE_NO_INGEST_BADGE=1</code></p>
+</div></body></html>`;
+
+  try { if (fs.readFileSync(INGEST_HELP_HTML, 'utf8') === html) return; } catch {}
+  fs.mkdirSync(path.dirname(INGEST_HELP_HTML), { recursive: true });
+  fs.writeFileSync(INGEST_HELP_HTML, html);
+}
+
 // ── Telemetry: token I/O ──────────────────────────────────────────────────────
 function loadToken() {
   try { return fs.readFileSync(TELEMETRY_TOKEN_PATH, 'utf8').trim() || null; }
@@ -575,6 +747,16 @@ async function backgroundHeartbeat(payloadFile) {
       return;
     }
     try { fs.writeFileSync(LAST_HEARTBEAT, String(Date.now())); } catch {}
+    // Persiste a saúde dos dois pipelines pro renderer desenhar os indicadores.
+    try {
+      const b = res.body && typeof res.body === 'object' ? res.body : {};
+      fs.writeFileSync(INGEST_HEALTH_CACHE, JSON.stringify({
+        at: Date.now(),
+        manual_ingest_ok: b.manual_ingest_ok === true,
+        otel_ingest_ok: b.otel_ingest_ok === true,
+        otel_last_seen_at: b.otel_last_seen_at ?? null,
+      }), { mode: 0o600 });
+    } catch {}
   } catch (e) {
     telemetryLog(`heartbeat exception: ${e.message}`);
   }
@@ -924,7 +1106,7 @@ async function main() {
     `${C.tokens}${G.token} ${fmtTokens(ctxTokens)} ctx${RESET} ${C.rule}·${RESET} ${C.label}last +${fmtTokens(lastOut)}${RESET}${SEP}` +
     `${C.time}${G.clock} ${fmtDuration(durMs)}${RESET}${SEP}` +
     `${ctxC}${G.ctx} ${bar} ${Math.floor(Number(ctxPct) || 0)}%${RESET}` +
-    `${linesBadge}${rlBadge}${updateBadge()}${helpLink()}`;
+    `${linesBadge}${rlBadge}${ingestHealthBadge()}${updateBadge()}${helpLink()}`;
 
   // Telemetry auth banner — third line, only when not yet authenticated.
   let authLine = '';
