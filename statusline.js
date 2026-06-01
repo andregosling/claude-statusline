@@ -488,11 +488,18 @@ function ingestHealthBadge() {
   const gStats = PLAIN ? '' : '\u{F0954} '; // 󰥔 pulso
   const gOtel = PLAIN ? '' : '\u{F02A4} ';  // 󰊤 antena/broadcast
 
-  const statsColor = h?.manual_ingest_ok ? C.ctxOk : C.ctxWarn;
+  // stats: verde = heartbeat aceito · vermelho = última tentativa FALHOU (last_error)
+  // · amarelo = nunca tentou (sem cache ainda).
+  let statsColor;
+  if (h == null) statsColor = C.ctxWarn;
+  else if (h.manual_ingest_ok) statsColor = C.ctxOk;
+  else statsColor = C.gitGone; // falhou (backend off, 401, etc)
   const stats = `${statsColor}${gStats}stats${RESET}`;
 
+  // otel: verde = backend recebeu OTel recente · amarelo = desconhecido (sem cache
+  // OU heartbeat falhou, então não dá pra saber) · vermelho = heartbeat OK mas OTel não chega.
   let otelColor;
-  if (h == null) otelColor = C.ctxWarn;
+  if (h == null || !h.manual_ingest_ok) otelColor = C.ctxWarn; // sem info confiável
   else otelColor = h.otel_ingest_ok ? C.ctxOk : C.gitGone;
   const otel = `${otelColor}${gOtel}otel${RESET}`;
 
@@ -824,37 +831,52 @@ function hashPath(p) {
 }
 
 // ── Telemetry: heartbeat ──────────────────────────────────────────────────────
+// Persiste o estado de saúde dos dois pipelines (lido pelo renderer p/ as cores
+// e pelo painel de diagnóstico do help.html). Grava TANTO no sucesso quanto na
+// falha — assim o badge distingue "aceito" (verde), "falhou" (vermelho) e
+// "nunca tentou" (amarelo, = arquivo ausente).
+function writeIngestHealth(obj) {
+  try {
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    fs.writeFileSync(INGEST_HEALTH_CACHE, JSON.stringify({ at: Date.now(), ...obj }), { mode: 0o600 });
+  } catch {}
+}
+
 async function backgroundHeartbeat(payloadFile) {
+  let endpoint = TELEMETRY_API_URL;
   try {
     const raw = fs.readFileSync(payloadFile, 'utf8');
     try { fs.unlinkSync(payloadFile); } catch {}
     const { token, payload } = JSON.parse(raw);
     if (!token) return;
-    const res = await httpPostJson(`${TELEMETRY_API_URL}/telemetry/heartbeat`, payload, {
+    const res = await httpPostJson(`${endpoint}/telemetry/heartbeat`, payload, {
       Authorization: `Bearer ${token}`,
     });
     if (res.status === 401) {
       deleteToken();
       telemetryLog(`heartbeat 401 — token deleted, will re-auth on next render`);
+      writeIngestHealth({ manual_ingest_ok: false, otel_ingest_ok: false, otel_last_seen_at: null, endpoint, last_error: 'HTTP 401 — token inválido/revogado' });
       return;
     }
     if (res.status >= 400) {
       telemetryLog(`heartbeat error status=${res.status} body=${res.raw}`);
+      writeIngestHealth({ manual_ingest_ok: false, otel_ingest_ok: false, otel_last_seen_at: null, endpoint, last_error: `HTTP ${res.status}` });
       return;
     }
     try { fs.writeFileSync(LAST_HEARTBEAT, String(Date.now())); } catch {}
-    // Persiste a saúde dos dois pipelines pro renderer desenhar os indicadores.
-    try {
-      const b = res.body && typeof res.body === 'object' ? res.body : {};
-      fs.writeFileSync(INGEST_HEALTH_CACHE, JSON.stringify({
-        at: Date.now(),
-        manual_ingest_ok: b.manual_ingest_ok === true,
-        otel_ingest_ok: b.otel_ingest_ok === true,
-        otel_last_seen_at: b.otel_last_seen_at ?? null,
-      }), { mode: 0o600 });
-    } catch {}
+    const b = res.body && typeof res.body === 'object' ? res.body : {};
+    writeIngestHealth({
+      manual_ingest_ok: b.manual_ingest_ok === true,
+      otel_ingest_ok: b.otel_ingest_ok === true,
+      otel_last_seen_at: b.otel_last_seen_at ?? null,
+      endpoint,
+      last_error: null,
+    });
   } catch (e) {
-    telemetryLog(`heartbeat exception: ${e.message}`);
+    // Causa real (ECONNREFUSED, timeout, etc) — antes vinha vazia e escondia tudo.
+    const cause = e && (e.code || e.message) ? (e.code || e.message) : String(e);
+    telemetryLog(`heartbeat exception: ${cause} (endpoint ${endpoint})`);
+    writeIngestHealth({ manual_ingest_ok: false, otel_ingest_ok: false, otel_last_seen_at: null, endpoint, last_error: `${cause}` });
   }
 }
 
