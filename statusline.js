@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Two-line dashboard status line for Claude Code.
 // Works on macOS, Linux, and Windows with zero external dependencies (only Node, which Claude Code already ships).
-// VERSION: 2.6.1
+// VERSION: 2.6.2
 // REPO: https://github.com/andregosling/claude-statusline
 
 'use strict';
@@ -9,18 +9,33 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const { execSync, spawn } = require('child_process');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const VERSION = '2.6.1';
+const VERSION = '2.6.2';
 const REPO_RAW = 'https://raw.githubusercontent.com/andregosling/claude-statusline/main';
 const CACHE_DIR = path.join(os.homedir(), '.claude', 'cache', 'claude-statusline');
 const LAST_CHECK = path.join(CACHE_DIR, 'last-check');
 const LAST_SESSION = path.join(CACHE_DIR, 'last-session');
 const REMOTE_VERSION_CACHE = path.join(CACHE_DIR, 'remote-version');
 const UPDATE_LOG = path.join(CACHE_DIR, 'update.log');
+const LAST_HEARTBEAT = path.join(CACHE_DIR, 'last-heartbeat');
+const LAST_HB_MODEL = path.join(CACHE_DIR, 'last-heartbeat-model');
+const PENDING_AUTH = path.join(CACHE_DIR, 'pending-auth.json');
+const AUTH_LOG = path.join(CACHE_DIR, 'auth.log');
+const TELEMETRY_LOG = path.join(CACHE_DIR, 'telemetry.log');
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24h
 const SELF_PATH = __filename;
+
+// ── Telemetry config ──────────────────────────────────────────────────────────
+const TELEMETRY_API_URL = process.env.CLAUDE_METRICS_API_URL || 'http://localhost:3005';
+const TELEMETRY_DISABLED = process.env.CLAUDE_METRICS_DISABLED === 'true' || process.env.CLAUDE_METRICS_DISABLED === '1';
+const TELEMETRY_TOKEN_PATH = process.env.CLAUDE_METRICS_TOKEN_PATH
+  ? process.env.CLAUDE_METRICS_TOKEN_PATH.replace(/^~/, os.homedir())
+  : path.join(os.homedir(), '.config', 'claude-statusline', 'token');
+const HEARTBEAT_INTERVAL_MS = Number(process.env.CLAUDE_METRICS_HEARTBEAT_INTERVAL_MS) || 60_000;
+const CLIENT_ID = 'claude-statusline';
 
 // ── ANSI helpers ──────────────────────────────────────────────────────────────
 const ESC = '\x1b';
@@ -153,6 +168,62 @@ function gitSegment(cwd) {
   return out + RESET;
 }
 
+// Parseia "git@host:owner/repo.git" ou "https://host/owner/repo.git" e retorna
+// { owner, repo, host } onde host é o nome curto (github, gitlab, bitbucket,
+// ou primeiro segmento do domínio pra hosts custom). Pra GitLab com subgrupo
+// (group/sub/repo) pega só group/repo — mantém legível na statusline.
+function parseGitRemote(url) {
+  if (!url) return null;
+  // SSH:   git@host:path/repo.git    ou    ssh://git@host/path/repo.git
+  // HTTPS: https://host[:port]/path/repo.git
+  const m = url.match(/^(?:git@([^:]+):|ssh:\/\/[^@]*@([^/]+)\/|https?:\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/)(.+?)(?:\.git)?\/?$/);
+  if (!m) return null;
+  const host = (m[1] || m[2] || m[3] || '').toLowerCase();
+  const fullPath = m[4];
+  const segs = fullPath.split('/').filter(Boolean);
+  if (segs.length < 2) return null;
+  const owner = segs[0];
+  const repo = segs[segs.length - 1];
+
+  let shortHost;
+  if (host === 'github.com') shortHost = 'github';
+  else if (host.includes('gitlab')) shortHost = 'gitlab';
+  else if (host.includes('bitbucket')) shortHost = 'bitbucket';
+  else shortHost = host.split('.')[0] || host;
+
+  return { owner, repo, host: shortHost };
+}
+
+// ── Git info for telemetry payload ───────────────────────────────────────────
+// remote.origin.url cacheia por cwd (não muda durante a sessão); branch sempre
+// re-lê (dev pode fazer checkout). Backend recebe cru e canonicaliza.
+const _gitRemoteCache = new Map();
+function readGitInfo(cwd) {
+  if (!cwd) return {};
+  const info = {};
+
+  if (!_gitRemoteCache.has(cwd)) {
+    let url = null;
+    try {
+      url = execSync('git config --get remote.origin.url', {
+        cwd, stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8', timeout: 1000,
+      }).trim() || null;
+    } catch {}
+    _gitRemoteCache.set(cwd, url);
+  }
+  const url = _gitRemoteCache.get(cwd);
+  if (url) info.git_remote_url = url;
+
+  try {
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
+      cwd, stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8', timeout: 1000,
+    }).trim();
+    if (branch && branch !== 'HEAD') info.git_branch = branch;
+  } catch {}
+
+  return info;
+}
+
 // ── Formatters ────────────────────────────────────────────────────────────────
 function fmtCost(c) {
   const n = Number(c) || 0;
@@ -199,6 +270,9 @@ function modelDisplay(id, display) {
 //   - more than 24h passed since the last check (covers marathon sessions).
 // Within the same session it never re-checks more than once per 24h, so no flood.
 function maybeScheduleUpdate(sessionId) {
+  // Dev kill-switch: set CLAUDE_STATUSLINE_NO_UPDATE=1 to prevent the background
+  // process from clobbering local edits. Critical while hacking on statusline.js.
+  if (process.env.CLAUDE_STATUSLINE_NO_UPDATE === '1') return;
   try {
     fs.mkdirSync(CACHE_DIR, { recursive: true });
 
@@ -316,6 +390,312 @@ function helpLink() {
   return `${SEP}${C.label}${open}(?)${close}${RESET}`;
 }
 
+// ── Telemetry: token I/O ──────────────────────────────────────────────────────
+function loadToken() {
+  try { return fs.readFileSync(TELEMETRY_TOKEN_PATH, 'utf8').trim() || null; }
+  catch { return null; }
+}
+function saveToken(token) {
+  fs.mkdirSync(path.dirname(TELEMETRY_TOKEN_PATH), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(TELEMETRY_TOKEN_PATH, token, { mode: 0o600 });
+}
+function deleteToken() {
+  try { fs.unlinkSync(TELEMETRY_TOKEN_PATH); } catch {}
+}
+function telemetryLog(line) {
+  try {
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    fs.appendFileSync(TELEMETRY_LOG, `[${new Date().toISOString()}] ${line}\n`);
+  } catch {}
+}
+
+// ── Telemetry: HTTP POST (zero deps) ──────────────────────────────────────────
+function httpPostJson(url, body, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const lib = u.protocol === 'https:' ? require('https') : require('http');
+    const payload = Buffer.from(JSON.stringify(body));
+    const req = lib.request({
+      method: 'POST',
+      hostname: u.hostname,
+      port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname + u.search,
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': payload.length,
+        ...headers,
+      },
+      timeout: 10000,
+    }, (res) => {
+      let buf = '';
+      res.setEncoding('utf8');
+      res.on('data', (d) => buf += d);
+      res.on('end', () => {
+        let parsed = null;
+        try { parsed = buf ? JSON.parse(buf) : null; } catch {}
+        resolve({ status: res.statusCode, body: parsed, raw: buf });
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.write(payload);
+    req.end();
+  });
+}
+
+// ── Telemetry: pending-auth state ─────────────────────────────────────────────
+// The statusline is re-invoked from scratch on each render, so the device flow's
+// (device_code, expires_at, interval) must live on disk. We render the banner
+// reading this file; a background process owns the polling.
+function loadPendingAuth() {
+  try {
+    const raw = fs.readFileSync(PENDING_AUTH, 'utf8');
+    const obj = JSON.parse(raw);
+    if (!obj || !obj.device_code || !obj.expires_at) return null;
+    if (Date.now() > obj.expires_at) { try { fs.unlinkSync(PENDING_AUTH); } catch {} return null; }
+    return obj;
+  } catch { return null; }
+}
+function savePendingAuth(obj) {
+  try {
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    fs.writeFileSync(PENDING_AUTH, JSON.stringify(obj));
+  } catch {}
+}
+function clearPendingAuth() {
+  try { fs.unlinkSync(PENDING_AUTH); } catch {}
+}
+
+// ── Telemetry: device flow (RFC 8628) ─────────────────────────────────────────
+async function backgroundAuthInit() {
+  try {
+    let pending = loadPendingAuth();
+    if (!pending) {
+      const res = await httpPostJson(`${TELEMETRY_API_URL}/oauth/device/authorize`, {
+        client_id: CLIENT_ID,
+        scope: 'telemetry:write',
+      });
+      if (res.status !== 200 || !res.body || !res.body.device_code) {
+        telemetryLog(`auth/authorize failed: status=${res.status} body=${res.raw}`);
+        return;
+      }
+      const init = res.body;
+      pending = {
+        device_code: init.device_code,
+        user_code: init.user_code,
+        verification_uri: init.verification_uri,
+        verification_uri_complete: init.verification_uri_complete,
+        interval_ms: (init.interval || 5) * 1000,
+        expires_at: Date.now() + (init.expires_in || 600) * 1000,
+      };
+      savePendingAuth(pending);
+      telemetryLog(`auth/init ok user_code=${pending.user_code} uri=${pending.verification_uri}`);
+    }
+    await pollDeviceToken(pending);
+  } catch (e) {
+    telemetryLog(`auth/init exception: ${e.message}`);
+  }
+}
+
+async function pollDeviceToken(pending) {
+  let interval = pending.interval_ms;
+  while (Date.now() < pending.expires_at) {
+    await new Promise((r) => setTimeout(r, interval));
+    let res;
+    try {
+      res = await httpPostJson(`${TELEMETRY_API_URL}/oauth/device/token`, {
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: pending.device_code,
+        client_id: CLIENT_ID,
+      });
+    } catch (e) {
+      telemetryLog(`auth/poll network error: ${e.message}`);
+      continue;
+    }
+    if (res.status === 200 && res.body && res.body.access_token) {
+      saveToken(res.body.access_token);
+      clearPendingAuth();
+      telemetryLog(`auth/poll success — token stored`);
+      return;
+    }
+    const err = res.body && res.body.error;
+    if (err === 'authorization_pending') continue;
+    if (err === 'slow_down') { interval += 5000; continue; }
+    if (err === 'access_denied') {
+      telemetryLog(`auth/poll denied by user`);
+      clearPendingAuth();
+      return;
+    }
+    if (err === 'expired_token') {
+      telemetryLog(`auth/poll expired_token`);
+      clearPendingAuth();
+      return;
+    }
+    telemetryLog(`auth/poll unknown response status=${res.status} body=${res.raw}`);
+  }
+  telemetryLog(`auth/poll timeout (10min window elapsed)`);
+  clearPendingAuth();
+}
+
+// ── Telemetry: PII sanitization ───────────────────────────────────────────────
+function hashPath(p) {
+  if (!p) return p;
+  if (/^[a-f0-9]{64}$/i.test(p)) return p.toLowerCase();
+  return crypto.createHash('sha256').update(p).digest('hex');
+}
+
+// ── Telemetry: heartbeat ──────────────────────────────────────────────────────
+async function backgroundHeartbeat(payloadFile) {
+  try {
+    const raw = fs.readFileSync(payloadFile, 'utf8');
+    try { fs.unlinkSync(payloadFile); } catch {}
+    const { token, payload } = JSON.parse(raw);
+    if (!token) return;
+    const res = await httpPostJson(`${TELEMETRY_API_URL}/telemetry/heartbeat`, payload, {
+      Authorization: `Bearer ${token}`,
+    });
+    if (res.status === 401) {
+      deleteToken();
+      telemetryLog(`heartbeat 401 — token deleted, will re-auth on next render`);
+      return;
+    }
+    if (res.status >= 400) {
+      telemetryLog(`heartbeat error status=${res.status} body=${res.raw}`);
+      return;
+    }
+    try { fs.writeFileSync(LAST_HEARTBEAT, String(Date.now())); } catch {}
+  } catch (e) {
+    telemetryLog(`heartbeat exception: ${e.message}`);
+  }
+}
+
+function buildHeartbeatPayload(payload) {
+  const session_id = pick(payload, 'session_id');
+  if (!session_id) return null;
+
+  const out = { session_id, cli_version: VERSION };
+
+  const modelId = pick(payload, 'model.id');
+  const modelDisp = pick(payload, 'model.display_name');
+  if (modelId || modelDisp) out.model = { id: modelId, display_name: modelDisp };
+
+  const effortLevel = pick(payload, 'effort.level');
+  if (effortLevel) out.effort = { level: effortLevel };
+
+  const thinkingEnabled = pick(payload, 'thinking.enabled');
+  if (thinkingEnabled != null) out.thinking = { enabled: thinkingEnabled === true };
+
+  const agentName = pick(payload, 'agent.name');
+  if (agentName) out.agent = { name: agentName };
+
+  const cost = payload && payload.cost;
+  if (cost && typeof cost === 'object') {
+    out.cost = {
+      total_cost_usd: cost.total_cost_usd,
+      total_duration_ms: cost.total_duration_ms,
+      total_api_duration_ms: cost.total_api_duration_ms,
+      total_lines_added: cost.total_lines_added,
+      total_lines_removed: cost.total_lines_removed,
+    };
+  }
+
+  const ctx = payload && payload.context_window;
+  if (ctx && typeof ctx === 'object') {
+    out.context_window = {
+      total_input_tokens: ctx.total_input_tokens,
+      total_output_tokens: ctx.total_output_tokens,
+      used_percentage: ctx.used_percentage,
+      cache_read_input_tokens: ctx.cache_read_input_tokens,
+      cache_creation_input_tokens: ctx.cache_creation_input_tokens,
+    };
+    // Sinal indireto de auto-compact (doc: current_usage fica null após /compact
+    // até o próximo turno repopular). Backend usa pra marcar intervalo como
+    // "contaminado" no cálculo de cost_per_model.
+    if (ctx.current_usage == null) out.context_window.compact_recent = true;
+  }
+
+  const rl = payload && payload.rate_limits;
+  if (rl && typeof rl === 'object') {
+    out.rate_limits = {};
+    if (rl.five_hour) out.rate_limits.five_hour = {
+      used_percentage: rl.five_hour.used_percentage,
+      resets_at: rl.five_hour.resets_at,
+    };
+    if (rl.seven_day) out.rate_limits.seven_day = {
+      used_percentage: rl.seven_day.used_percentage,
+      resets_at: rl.seven_day.resets_at,
+    };
+  }
+
+  const ws = payload && payload.workspace;
+  if (ws && typeof ws === 'object') {
+    out.workspace = {
+      current_dir: hashPath(ws.current_dir),
+      project_dir: hashPath(ws.project_dir),
+      git_worktree: ws.git_worktree,
+      ...readGitInfo(ws.current_dir),
+    };
+  }
+
+  out.client_reported_at = new Date().toISOString();
+  return out;
+}
+
+function maybeSendHeartbeat(payload) {
+  if (TELEMETRY_DISABLED) return;
+  const token = loadToken();
+  if (!token) return;
+
+  const currentModelId = pick(payload, 'model.id') || '';
+  let lastModelId = '';
+  try { lastModelId = fs.readFileSync(LAST_HB_MODEL, 'utf8').trim(); } catch {}
+  const modelChanged = currentModelId && currentModelId !== lastModelId;
+
+  let last = 0;
+  try { last = Number(fs.readFileSync(LAST_HEARTBEAT, 'utf8')) || 0; } catch {}
+  // Rate-limit normal de 60s; mudança de model.id bypassa pra atribuição
+  // correta de cost no backend (janela de erro: 1 turno em vez de até 60s).
+  if (!modelChanged && Date.now() - last < HEARTBEAT_INTERVAL_MS) return;
+
+  const built = buildHeartbeatPayload(payload);
+  if (!built) return;
+
+  try {
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    if (currentModelId) {
+      try { fs.writeFileSync(LAST_HB_MODEL, currentModelId); } catch {}
+    }
+    const tmpFile = path.join(CACHE_DIR, `hb-${process.pid}-${Date.now()}.json`);
+    fs.writeFileSync(tmpFile, JSON.stringify({ token, payload: built }), { mode: 0o600 });
+    const child = spawn(process.execPath, [SELF_PATH, '--bg-heartbeat', tmpFile], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    child.unref();
+  } catch (e) {
+    telemetryLog(`heartbeat spawn failed: ${e.message}`);
+  }
+}
+
+function maybeStartAuth() {
+  if (TELEMETRY_DISABLED) return;
+  if (loadToken()) return;
+  if (loadPendingAuth()) return;
+
+  try {
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    const child = spawn(process.execPath, [SELF_PATH, '--bg-auth-init'], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    child.unref();
+  } catch (e) {
+    telemetryLog(`auth spawn failed: ${e.message}`);
+  }
+}
+
 // ── Read payload from stdin ───────────────────────────────────────────────────
 function readStdin() {
   return new Promise((resolve) => {
@@ -334,6 +714,15 @@ async function main() {
   // Background-update entry point: never runs render path
   if (process.argv.includes('--bg-update')) {
     await backgroundUpdate();
+    return;
+  }
+  if (process.argv.includes('--bg-auth-init')) {
+    await backgroundAuthInit();
+    return;
+  }
+  const hbIdx = process.argv.indexOf('--bg-heartbeat');
+  if (hbIdx !== -1 && process.argv[hbIdx + 1]) {
+    await backgroundHeartbeat(process.argv[hbIdx + 1]);
     return;
   }
 
@@ -359,7 +748,13 @@ async function main() {
   const worktree = pick(payload, 'workspace.git_worktree');
   const effort = pick(payload, 'effort.level');
 
-  const pathStr = prettyPath(cwd);
+  // Se o cwd tem remote.origin.url, mostra "owner/repo · host" em vez do path.
+  // Fallback pro prettyPath quando: não é repo git, sem origin, ou URL não-parseável.
+  const _gitInfo = readGitInfo(cwd);
+  const _repo = parseGitRemote(_gitInfo.git_remote_url);
+  const pathStr = _repo
+    ? `${_repo.owner}/${_repo.repo} ${DIM}·${RESET}${C.path}${BOLD} ${_repo.host}`
+    : prettyPath(cwd);
   const gitStr = gitSegment(cwd);
   // IMPORTANT: Claude Code's context_window fields are PER-TURN SNAPSHOTS, not
   // session cumulatives (confirmed via docs). So:
@@ -419,16 +814,15 @@ async function main() {
     // Bolinha color — RAW USAGE only, time-independent.
     const dotColor = used >= 80 ? C.ctxHot : used >= 50 ? C.ctxWarn : C.ctxOk;
 
-    // Pace — usage rate vs how much of the 5h window has elapsed.
-    //   pace = used_fraction / elapsed_fraction
-    // In the first ~10% (~30min) the denominator is tiny, so the number jumps
-    // around render-to-render (a single message can spike it to 5×). We still
-    // SHOW it — hiding the segment confused users into thinking it broke — but
-    // we tag it "warming" so the jitter is expected, not alarming.
-    let pace = null, paceWarming = false;
+    // Pace — sempre cru (sem suavização), porque o dev usa pra decidir se vai
+    // bater no teto das 5h. Suavizar enganaria justamente no momento crítico.
+    // Nos primeiros 15min (elapsedFrac < 0.05) marcamos "warming": o número é
+    // real, mas o denominador minúsculo faz oscilar — leitor precisa saber.
+    let pace = null;
+    let paceWarming = false;
     if (elapsedFrac != null && elapsedFrac > 0) {
       pace = (used / 100) / elapsedFrac;
-      paceWarming = elapsedFrac < 0.10;
+      paceWarming = elapsedFrac < 0.05;
     }
 
     // Pace bucket: icon + label + its OWN color (independent of the bolinha).
@@ -448,9 +842,8 @@ async function main() {
     if (resetStr) badge += ` · resets in ${resetStr}`;
     badge += RESET;
     if (paceX != null) {
-      badge += `${SEP}${paceColor}${paceIcon} ${paceLabel} ${paceX}×${RESET}`;
-      // "warming" suffix in dim — the number is live but still settling.
-      if (paceWarming) badge += ` ${DIM}warming${RESET}`;
+      const warmTag = paceWarming ? ` ${DIM}(warming)${RESET}` : '';
+      badge += `${SEP}${paceColor}${paceIcon} ${paceLabel} ${paceX}×${RESET}${warmTag}`;
     }
     rlBadge = badge;
   }
@@ -468,10 +861,28 @@ async function main() {
     `${ctxC}${G.ctx} ${bar} ${Math.floor(Number(ctxPct) || 0)}%${RESET}` +
     `${linesBadge}${rlBadge}${updateBadge()}${helpLink()}`;
 
-  process.stdout.write(line1 + '\n' + line2 + '\n');
+  // Telemetry auth banner — third line, only when not yet authenticated.
+  let authLine = '';
+  if (!TELEMETRY_DISABLED && !loadToken()) {
+    const pending = loadPendingAuth();
+    if (pending) {
+      const uri = pending.verification_uri || `${TELEMETRY_API_URL}/device`;
+      authLine = `${C.rule}  ${RESET}${C.gitDirty}⚠ telemetry auth pendente${RESET} ${C.rule}·${RESET} ` +
+                 `código ${BOLD}${C.cost}${pending.user_code}${RESET} em ${C.path}${uri}${RESET}`;
+    } else {
+      authLine = `${C.rule}  ${RESET}${C.label}telemetry: iniciando pareamento...${RESET}`;
+      maybeStartAuth();
+    }
+  }
+
+  const output = authLine
+    ? `${line1}\n${line2}\n${authLine}\n`
+    : `${line1}\n${line2}\n`;
+  process.stdout.write(output);
 
   // Fire-and-forget background update check (triggers on new session or 24h elapsed)
   maybeScheduleUpdate(sessionId);
+  maybeSendHeartbeat(payload);
 }
 
 main().catch(() => {
