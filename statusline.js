@@ -25,6 +25,14 @@ const LAST_HB_MODEL = path.join(CACHE_DIR, 'last-heartbeat-model');
 const PENDING_AUTH = path.join(CACHE_DIR, 'pending-auth.json');
 const AUTH_LOG = path.join(CACHE_DIR, 'auth.log');
 const TELEMETRY_LOG = path.join(CACHE_DIR, 'telemetry.log');
+// Saúde dos dois pipelines (vem da resposta do POST /telemetry/heartbeat).
+// O bg-heartbeat escreve; o render lê (defasagem de ~1 ciclo, igual LAST_HEARTBEAT).
+const INGEST_HEALTH_CACHE = path.join(CACHE_DIR, 'ingest-health.json');
+const INGEST_HELP_HTML = path.join(CACHE_DIR, 'twt-metrics-help.html');
+// Throttle do enforce de OTel — settings.json muda raramente, não reescrever a cada render.
+const OTEL_ENFORCE_THROTTLE_MS = 6 * 60 * 60 * 1000; // 6h
+const OTEL_ENFORCE_CACHE = path.join(CACHE_DIR, 'otel-enforce');
+const CLAUDE_SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24h
 const SELF_PATH = __filename;
 
@@ -681,6 +689,60 @@ function maybeSendHeartbeat(payload) {
   }
 }
 
+// ── OTel enforce ────────────────────────────────────────────────────────────
+// O Claude Code emite telemetria OTel nativa (tools, tokens/turno, erros) — dados
+// que o heartbeat não vê. Pra capturar, o CC precisa exportar OTLP pro nosso
+// servidor. Como já temos o token cmt_... local, o statusline CONFIGURA o CC
+// sozinho (enforce a cada run, idempotente): escreve as env vars de OTel +
+// o header de auth no ~/.claude/settings.json do dev. Zero trabalho manual.
+//
+// v1 é JSON-only (OTEL_EXPORTER_OTLP_PROTOCOL=http/json). O servidor resolve a
+// identidade pelo MESMO token do heartbeat (Bearer cmt_...). OTel exige restart
+// do CC pra pegar env nova — o enforce garante que da próxima vez já está pronto.
+function maybeEnforceOtelConfig() {
+  if (TELEMETRY_DISABLED) return;
+  if (process.env.CLAUDE_METRICS_NO_OTEL_ENFORCE === '1') return;
+  const token = loadToken();
+  if (!token) return; // sem token, OTel não atribui — nada a fazer
+
+  let last = 0;
+  try { last = Number(fs.readFileSync(OTEL_ENFORCE_CACHE, 'utf8')) || 0; } catch {}
+  if (Date.now() - last < OTEL_ENFORCE_THROTTLE_MS) return;
+
+  const desired = {
+    CLAUDE_CODE_ENABLE_TELEMETRY: '1',
+    OTEL_METRICS_EXPORTER: 'otlp',
+    OTEL_LOGS_EXPORTER: 'otlp',
+    OTEL_EXPORTER_OTLP_PROTOCOL: 'http/json',
+    OTEL_EXPORTER_OTLP_ENDPOINT: TELEMETRY_API_URL,
+    OTEL_EXPORTER_OTLP_HEADERS: `Authorization=Bearer ${token}`,
+    OTEL_METRICS_INCLUDE_VERSION: 'true',
+  };
+
+  try {
+    let settings = {};
+    try { settings = JSON.parse(fs.readFileSync(CLAUDE_SETTINGS_PATH, 'utf8')) || {}; }
+    catch { settings = {}; }
+    if (typeof settings !== 'object' || settings === null) settings = {};
+
+    const env = (settings.env && typeof settings.env === 'object') ? settings.env : {};
+    let changed = false;
+    for (const [k, v] of Object.entries(desired)) {
+      if (env[k] !== v) { env[k] = v; changed = true; }
+    }
+
+    if (changed) {
+      settings.env = env;
+      fs.mkdirSync(path.dirname(CLAUDE_SETTINGS_PATH), { recursive: true });
+      fs.writeFileSync(CLAUDE_SETTINGS_PATH, JSON.stringify(settings, null, 2) + '\n', { mode: 0o600 });
+      telemetryLog(`otel-enforce: wrote OTel env to settings.json (endpoint=${TELEMETRY_API_URL})`);
+    }
+    try { fs.mkdirSync(CACHE_DIR, { recursive: true }); fs.writeFileSync(OTEL_ENFORCE_CACHE, String(Date.now())); } catch {}
+  } catch (e) {
+    telemetryLog(`otel-enforce failed: ${e.message}`);
+  }
+}
+
 function maybeStartAuth() {
   if (TELEMETRY_DISABLED) return;
   if (loadToken()) return;
@@ -886,6 +948,8 @@ async function main() {
   // Fire-and-forget background update check (triggers on new session or 24h elapsed)
   maybeScheduleUpdate(sessionId);
   maybeSendHeartbeat(payload);
+  // Enforce da config de OTel no Claude Code (idempotente, throttle 6h).
+  maybeEnforceOtelConfig();
 }
 
 main().catch(() => {
