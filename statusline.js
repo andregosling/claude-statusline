@@ -489,126 +489,22 @@ function ingestHealthBadge() {
   const gOtel = PLAIN ? '' : '\u{F02A4} ';  // 󰊤 antena/broadcast
 
   const statsColor = h?.manual_ingest_ok ? C.ctxOk : C.ctxWarn;
-  const stats = helpAnchor(`${statsColor}${gStats}stats${RESET}`, 'stats');
+  const stats = `${statsColor}${gStats}stats${RESET}`;
 
   let otelColor;
   if (h == null) otelColor = C.ctxWarn;
   else otelColor = h.otel_ingest_ok ? C.ctxOk : C.gitGone;
-  const otel = helpAnchor(`${otelColor}${gOtel}otel${RESET}`, 'otel');
+  const otel = `${otelColor}${gOtel}otel${RESET}`;
 
-  const label = helpAnchor(`${C.label}twt metrics${RESET}`, 'twt-metrics');
-  return `${SEP}${label}${C.label}:${RESET} ${stats}${C.rule} · ${RESET}${otel}`;
+  // Sem link nos indicadores (texto puro). A ajuda fica no (?) geral no fim da linha.
+  return `${SEP}${C.label}twt metrics:${RESET} ${stats}${C.rule} · ${RESET}${otel}`;
 }
 
-// Gera o help.html completo (standalone, zero deps, estética Linear): sidebar de
-// seções à esquerda + conteúdo (transcrito do HELP.md) à direita, navegável por
-// #hash. Cada segmento da status line linka pra sua seção via helpAnchor().
+// Gera o help.html completo (standalone, zero deps): cards com glow neon, mock da
+// status line no topo, dots de cor vivos. Cada card tem id pra âncora (#stats etc).
 // Idempotente: só reescreve se o conteúdo mudou. Bump HELP_VERSION ao editar.
-const HELP_VERSION = 3;
+const HELP_VERSION = 5;
 function writeHelpHtml() {
-  // Seções: { id (âncora), nav (label da sidebar), html (conteúdo) }.
-  const sections = [
-    { id: 'overview', nav: 'Visão geral', html: `
-      <h2>O que é a status line</h2>
-      <p>Uma barra de duas linhas no rodapé do Claude Code: a de cima é <b>contexto</b> (onde você está), a de baixo é <b>métricas</b> (o que está consumindo). <b>Cada item é clicável</b> — Cmd/Ctrl+clique abre esta página já na seção dele.</p>
-      <div class="tree"><span class="g3">╭─</span>  ~/code/projeto · ⎇ main +3 ~2 · 󰚩 Opus · high
-<span class="g3">╰─</span>  $0.42 ·  219k ctx · last +187 ·  18m · ███████░░░ 73%  +156/-23 · ● 5h · twt metrics: stats · otel</div>` },
-    { id: 'path', nav: 'Diretório', html: `
-      <h2><span class="mono">~/code/projeto</span> — diretório</h2>
-      <p>Diretório de trabalho atual. Caminho profundo encurta pra <span class="mono">~/…/projeto/src</span> (só os 2 últimos segmentos).</p>` },
-    { id: 'git', nav: 'Git', html: `
-      <h2><span class="mono">⎇ main +3 ~2</span> — estado do git</h2>
-      <ul>
-        <li><b>main</b> — branch atual (ou hash curto se HEAD detached)</li>
-        <li><b>↑N / ↓N</b> — commits ahead / behind do upstream</li>
-        <li><b>+N</b> — arquivos novos / staged · <b>~N</b> modificados · <b>−N</b> deletados</li>
-      </ul>
-      <p><b>Cor:</b> <span class="dot g"></span>verde = limpo · <span class="dot y"></span>âmbar = dirty.</p>` },
-    { id: 'model', nav: 'Modelo', html: `
-      <h2><span class="mono">󰚩 Opus 4.7</span> — modelo</h2>
-      <p>Modelo do Claude ativo na sessão (display name compacto).</p>` },
-    { id: 'effort', nav: 'Effort', html: `
-      <h2><span class="mono">high / med / low</span> — effort level</h2>
-      <p>Effort configurado (campo <span class="mono">effortLevel</span> no settings.json). Só aparece se setado.</p>
-      <h3 class="mt"><span class="mono">wt:feature-x</span> — worktree</h3>
-      <p>Indicador de worktree. Só aparece dentro de um worktree do Claude Code.</p>` },
-    { id: 'cost', nav: 'Custo', html: `
-      <h2><span class="mono"> $0.42</span> — custo</h2>
-      <p>Custo total em USD da sessão (campo <span class="mono">cost.total_cost_usd</span> do Claude Code).</p>` },
-    { id: 'ctx', nav: 'Contexto / last', html: `
-      <h2><span class="mono"> 219.4k ctx · last +187</span></h2>
-      <p>O Claude Code <b>não fornece contadores acumulados</b> de tokens — os campos são snapshots do turno atual. O statusline mostra o que dá pra mostrar de forma honesta:</p>
-      <ul>
-        <li><b>219.4k ctx</b> — tamanho do contexto <b>agora</b>: system prompt + tools + CLAUDE.md + todo o histórico. É o número que importa ("quão cheio está"). Até um "oi" mostra ~8k: esse overhead é o custo fixo da sessão.</li>
-        <li><b>last +187</b> — output <b>só do último turno</b>. Muda a cada resposta. Labelado "last" de propósito — não é total de sessão (que o CC não expõe).</li>
-      </ul>` },
-    { id: 'time', nav: 'Tempo', html: `
-      <h2><span class="mono"> 18m03s</span> — tempo</h2>
-      <p>Wall-clock da sessão: quanto passou desde que você abriu o Claude Code.</p>` },
-    { id: 'ctxbar', nav: 'Barra de contexto', html: `
-      <h2><span class="mono"> ███████░░░ 73%</span> — context window</h2>
-      <p>Quanto do contexto da sessão já está cheio. Passando de 100%, o Claude faz compaction.</p>
-      <p><b>Cor:</b> <span class="dot g"></span>verde &lt;50% · <span class="dot y"></span>âmbar 50–79% · <span class="dot r"></span>vermelho ≥80% (vai compactar).</p>` },
-    { id: 'lines', nav: 'Linhas', html: `
-      <h2><span class="mono">+156/-23</span> — linhas</h2>
-      <p>Linhas de código adicionadas / removidas na sessão. Só aparece quando você editou algo.</p>` },
-    { id: 'rl5h', nav: 'Rate limit 5h', html: `
-      <h2><span class="mono">● 5h · resets in 2h14m</span> — a bolinha</h2>
-      <p>Rate limit de 5 horas do seu plano. A bolinha e o pace são <b>duas métricas independentes</b>:</p>
-      <ul>
-        <li><b>Bolinha ●</b> — reflete <b>só o % bruto de uso</b>, ignorando o tempo: <span class="dot g"></span>verde &lt;50% · <span class="dot y"></span>âmbar 50–79% · <span class="dot r"></span>vermelho ≥80%.</li>
-        <li><b>resets in Xh YYm</b> — tempo até a janela de 5h zerar.</li>
-      </ul>
-      <p>Usou só 5% do limite? Bolinha <b>verde</b>, mesmo com pace alto. Uso baixo = bolinha verde, ponto.</p>` },
-    { id: 'pace', nav: 'Pace', html: `
-      <h2><span class="mono">🏃 fast 1.5×</span> — o pace</h2>
-      <p>O segmento mais importante: <b>"estou gastando rápido demais?"</b>. Tem cor própria, separada da bolinha.</p>
-      <p class="mono dim">pace = uso_atual ÷ tempo_decorrido (ambos como fração da janela de 5h)</p>
-      <table>
-        <tr><td><b>1.0×</b></td><td>ritmo perfeito — bate 100% exatamente no reset</td></tr>
-        <tr><td><b>&lt; 1.0×</b></td><td>tem folga (0.5× = metade do ritmo)</td></tr>
-        <tr><td><b>&gt; 1.0×</b></td><td>acelerado — bate o teto antes do reset</td></tr>
-      </table>
-      <table class="mt">
-        <tr><td><span class="dot g"></span>🐢 chill</td><td>&lt; 0.7× — folga, gasta à vontade</td></tr>
-        <tr><td><span class="dot g"></span>🚶 ok</td><td>0.7–1.1× — no ritmo</td></tr>
-        <tr><td><span class="dot y"></span>🏃 fast</td><td>1.1–1.5× — segura um pouco</td></tr>
-        <tr><td><span class="dot r"></span>🔥 hot</td><td>&gt; 1.5× — vai bater o teto cedo</td></tr>
-      </table>
-      <h3 class="mt">sufixo <span class="mono">warming</span></h3>
-      <p>Nos primeiros ~30min da janela, o pace aparece com <b>warming</b> apagado: o número é real mas ainda oscila (dividir por tempo quase-zero amplifica tudo). Depois estabiliza e o warming some.</p>` },
-    { id: 'twt-metrics', nav: 'twt metrics', html: `
-      <h2><span class="mono">twt metrics: stats · otel</span></h2>
-      <p>Dois sinais de saúde da ingestão — dizem se o seu uso do Claude está chegando ao servidor de métricas. Cada um vigia um caminho diferente. <b>Cor:</b> <span class="dot g"></span>verde = chegando · <span class="dot y"></span>âmbar = desconhecido · <span class="dot r"></span>vermelho = não chega.</p>` },
-    { id: 'stats', nav: '— stats', sub: true, html: `
-      <h2><span class="chip stats">stats</span> heartbeat do statusline</h2>
-      <p>O ingest clássico: a cada ~60s a status line manda um resumo da sessão — <b>custo, rate-limit (5h/7d), uso de contexto, linhas, repo</b>. É a fonte que o OpenTelemetry <i>não enxerga</i>.</p>
-      <ul>
-        <li><span class="dot g"></span><b>Verde</b> — último heartbeat aceito pelo servidor.</li>
-        <li><span class="dot y"></span><b>Amarelo</b> — sem resposta recente (acabou de abrir / servidor não respondeu).</li>
-      </ul>` },
-    { id: 'otel', nav: '— otel', sub: true, html: `
-      <h2><span class="chip otel">otel</span> OpenTelemetry do Claude Code</h2>
-      <p>Telemetria <b>profunda</b> do próprio Claude Code: <b>tools, MCP e skills</b> usadas, <b>tokens e custo por turno</b>, commits, PRs e <b>erros</b>. O statusline configura tudo sozinho; o servidor confirma se recebe.</p>
-      <ul>
-        <li><span class="dot g"></span><b>Verde</b> — servidor recebeu eventos OTel na última hora.</li>
-        <li><span class="dot y"></span><b>Amarelo</b> — estado desconhecido (sem heartbeat recente pra perguntar).</li>
-        <li><span class="dot r"></span><b>Vermelho</b> — servidor <b>não</b> recebe OTel. Causa comum: <b>reinicie o Claude Code</b> (a config de OTel só ativa no restart). Persistindo, fale com o time.</li>
-      </ul>` },
-    { id: 'update', nav: 'Update', html: `
-      <h2><span class="mono">⬆ vX.Y.Z available</span> — update</h2>
-      <p>Tem versão nova publicada que ainda não baixou. Pra instalar agora:</p>
-      <p class="mono dim">claude-statusline update</p>
-      <p>O badge some na próxima atualização (~5s). Esconder: <span class="mono">CLAUDE_STATUSLINE_NO_UPDATE_BADGE=1</span>.</p>` },
-  ];
-
-  const nav = sections.map((s) =>
-    `<a href="#${s.id}" class="navlink${s.sub ? ' sub' : ''}" data-sec="${s.id}">${s.nav}</a>`,
-  ).join('\n');
-  const body = sections.map((s) =>
-    `<section id="${s.id}">${s.html}</section>`,
-  ).join('\n');
-
   const html = `<!doctype html>
 <html lang="pt-br" data-v="${HELP_VERSION}">
 <head>
@@ -623,76 +519,148 @@ function writeHelpHtml() {
     --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,monospace;
     --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",sans-serif; }
   * { box-sizing:border-box; margin:0; padding:0; }
-  html { -webkit-font-smoothing:antialiased; scroll-behavior:smooth; }
-  body { background:var(--bg); color:var(--txt); font-family:var(--sans); line-height:1.6;
-    display:grid; grid-template-columns:248px 1fr; min-height:100vh; }
-  /* sidebar */
-  aside { position:sticky; top:0; align-self:start; height:100vh; overflow-y:auto;
-    border-right:1px solid var(--line); padding:28px 18px; background:var(--panel); }
-  .brand { font-family:var(--mono); font-size:12px; letter-spacing:.14em; text-transform:uppercase;
-    color:var(--txt-3); margin-bottom:6px; display:flex; align-items:center; gap:8px; }
-  .brand .led { width:6px; height:6px; border-radius:50%; background:var(--accent); box-shadow:0 0 10px var(--accent); }
-  .brand-title { font-size:16px; font-weight:600; color:var(--txt); margin-bottom:22px; letter-spacing:-.01em; }
-  nav { display:flex; flex-direction:column; gap:1px; }
-  .navlink { color:var(--txt-2); text-decoration:none; font-size:13.5px; padding:7px 12px; border-radius:8px;
-    transition:background .15s,color .15s; border-left:2px solid transparent; }
-  .navlink:hover { background:var(--line-2); color:var(--txt); }
-  .navlink.sub { padding-left:26px; font-size:13px; color:var(--txt-3); }
-  .navlink.active { background:color-mix(in srgb,var(--accent) 14%,transparent); color:#fff; border-left-color:var(--accent); }
-  /* conteúdo */
-  main { padding:56px 56px 120px; max-width:760px; }
-  section { scroll-margin-top:32px; padding:26px 0; border-bottom:1px solid var(--line-2); animation:rise .5s ease both; }
-  section:first-child { padding-top:0; }
-  section:last-child { border-bottom:none; }
-  h2 { font-size:21px; font-weight:600; letter-spacing:-.02em; margin-bottom:12px; }
-  h3 { font-size:15px; font-weight:600; color:var(--txt); }
-  h3.mt, table.mt, .mt { margin-top:18px; }
-  p { color:var(--txt-2); font-size:15px; margin-bottom:12px; }
-  p b, li b, td b { color:var(--txt); font-weight:600; }
-  p i { color:var(--txt); font-style:normal; border-bottom:1px dashed var(--txt-3); }
-  ul { list-style:none; display:flex; flex-direction:column; gap:9px; margin:4px 0 12px; }
-  li { color:var(--txt-2); font-size:14.5px; padding-left:2px; }
-  table { border-collapse:collapse; width:100%; }
-  td { padding:7px 12px 7px 0; font-size:14px; color:var(--txt-2); border-bottom:1px solid var(--line-2); vertical-align:top; }
-  td:first-child { white-space:nowrap; color:var(--txt); font-weight:500; width:1%; padding-right:18px; }
-  .mono { font-family:var(--mono); background:var(--panel-2); border:1px solid var(--line);
-    padding:1px 7px; border-radius:6px; font-size:.92em; color:var(--txt); }
-  p.mono { display:inline-block; }
-  .dim { color:var(--txt-3); }
-  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:7px; vertical-align:middle;
-    box-shadow:0 0 8px currentColor; }
-  .dot.g { background:var(--green); color:var(--green); } .dot.y { background:var(--amber); color:var(--amber); }
-  .dot.r { background:var(--red); color:var(--red); }
-  .chip { font-family:var(--mono); font-size:13px; font-weight:600; padding:3px 10px; border-radius:7px;
-    margin-right:6px; border:1px solid var(--ca); background:color-mix(in srgb,var(--ca) 13%,transparent); }
-  .chip.stats { --ca:var(--accent); } .chip.otel { --ca:var(--green); }
-  .tree { font-family:var(--mono); font-size:12.5px; line-height:1.9; color:var(--txt-2); background:var(--panel);
-    border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin:14px 0; white-space:pre-wrap; }
-  .tree .g3 { color:var(--txt-3); }
-  @keyframes rise { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
-  @media (max-width:720px) { body { grid-template-columns:1fr; } aside { position:static; height:auto; border-right:none; border-bottom:1px solid var(--line); }
-    nav { flex-flow:row wrap; } main { padding:32px 22px 80px; } }
+  html { -webkit-font-smoothing:antialiased; scroll-behavior:smooth; text-rendering:optimizeLegibility; }
+  body { background:var(--bg); color:var(--txt); font-family:var(--sans); line-height:1.55;
+    min-height:100vh; padding:72px 24px 96px; position:relative; overflow-x:hidden; }
+  body::before { content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
+    background:radial-gradient(680px 340px at 50% -8%, rgba(124,132,242,.16), transparent 70%),
+      radial-gradient(900px 500px at 85% 8%, rgba(76,195,138,.05), transparent 60%); }
+  .wrap { max-width:740px; margin:0 auto; position:relative; z-index:1; }
+  .eyebrow { font-family:var(--mono); font-size:11.5px; letter-spacing:.18em; text-transform:uppercase;
+    color:var(--txt-3); margin-bottom:16px; display:flex; align-items:center; gap:9px; animation:rise .6s cubic-bezier(.2,.7,.2,1) both; }
+  .eyebrow .led { width:6px; height:6px; border-radius:50%; background:var(--accent); box-shadow:0 0 10px var(--accent); }
+  h1 { font-size:32px; font-weight:600; letter-spacing:-.025em; line-height:1.1; margin-bottom:12px;
+    animation:rise .6s cubic-bezier(.2,.7,.2,1) .05s both; }
+  h1 .grad { background:linear-gradient(95deg,#fff,#9ea4f5); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+  .lead { font-size:16px; color:var(--txt-2); max-width:60ch; animation:rise .6s cubic-bezier(.2,.7,.2,1) .1s both; }
+  /* mock */
+  .mock { margin:30px 0 14px; border-radius:12px; overflow:hidden; border:1px solid var(--line); background:var(--panel);
+    box-shadow:0 24px 60px -28px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,.03); animation:rise .7s cubic-bezier(.2,.7,.2,1) .15s both; }
+  .mock-bar { display:flex; align-items:center; gap:7px; padding:11px 14px; background:var(--panel-2); border-bottom:1px solid var(--line-2); }
+  .tl { width:11px; height:11px; border-radius:50%; } .tl.r{background:#ff5f57} .tl.y{background:#febc2e} .tl.g{background:#28c840}
+  .mock-bar .ttl { margin-left:8px; font-family:var(--mono); font-size:11.5px; color:var(--txt-3); }
+  .mock-body { padding:16px 20px; font-family:var(--mono); font-size:12.5px; line-height:2; white-space:pre-wrap; color:var(--txt-2); }
+  .mock-body .g3 { color:var(--txt-3); } .mock-body .ok { color:var(--green); } .mock-body .bad { color:var(--red); }
+  .section-label { font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--txt-3);
+    margin:40px 0 14px; padding-left:2px; }
+  /* cards */
+  .card { border:1px solid var(--line); border-radius:14px; background:var(--panel); padding:22px 24px 18px;
+    margin-bottom:14px; position:relative; transition:border-color .25s, transform .25s; animation:rise .5s cubic-bezier(.2,.7,.2,1) both; }
+  .card:hover { border-color:rgba(255,255,255,.13); transform:translateY(-1px); }
+  .card::before { content:""; position:absolute; left:24px; right:24px; top:0; height:1px;
+    background:linear-gradient(90deg,transparent,var(--ca,var(--accent)),transparent); opacity:.45; }
+  .card.stats { --ca:var(--accent); } .card.otel { --ca:var(--green); }
+  .card-head { display:flex; align-items:center; gap:11px; margin-bottom:9px; flex-wrap:wrap; }
+  .chip { font-family:var(--mono); font-size:12px; font-weight:600; padding:3px 10px; border-radius:7px; color:var(--txt);
+    border:1px solid var(--ca,var(--accent)); background:color-mix(in srgb,var(--ca,var(--accent)) 12%,transparent); }
+  .card-head h2 { font-size:17px; font-weight:600; letter-spacing:-.01em; }
+  .card p { color:var(--txt-2); font-size:14.5px; margin-bottom:12px; } .card p:last-child { margin-bottom:0; }
+  .card p b { color:var(--txt); font-weight:600; } .card p i { color:var(--txt); font-style:normal; border-bottom:1px dashed var(--txt-3); }
+  .states { display:flex; flex-direction:column; gap:1px; }
+  .state { display:grid; grid-template-columns:15px 70px 1fr; align-items:start; gap:13px; padding:9px 10px; border-radius:9px; transition:background .2s; }
+  .state:hover { background:var(--line-2); }
+  .state .dot { width:10px; height:10px; border-radius:50%; margin-top:5px; background:var(--c);
+    box-shadow:0 0 0 3px color-mix(in srgb,var(--c) 18%,transparent), 0 0 14px var(--c); }
+  .state .nm { font-weight:600; font-size:13.5px; color:var(--ct); } .state .ds { color:var(--txt-2); font-size:13.5px; } .state .ds b { color:var(--txt); }
+  .g{--c:var(--green);--ct:#6fdca6} .y{--c:var(--amber);--ct:#f4d06a} .rd{--c:var(--red);--ct:#f88}
+  .mono { font-family:var(--mono); background:var(--panel-2); border:1px solid var(--line); padding:1px 6px; border-radius:5px; font-size:.9em; color:var(--txt); }
+  .tbl { width:100%; border-collapse:collapse; margin-top:4px; } .tbl td { padding:6px 12px 6px 0; font-size:13.5px; color:var(--txt-2); border-bottom:1px solid var(--line-2); vertical-align:top; }
+  .tbl td:first-child { white-space:nowrap; color:var(--txt); font-weight:500; width:1%; }
+  .foot { margin-top:36px; padding-top:20px; border-top:1px solid var(--line-2); color:var(--txt-3); font-size:12.5px; text-align:center; animation:rise .6s ease .4s both; }
+  .foot code { font-family:var(--mono); background:var(--panel-2); border:1px solid var(--line); padding:2px 7px; border-radius:6px; color:var(--txt-2); font-size:11.5px; }
+  section { scroll-margin-top:24px; }
+  @keyframes rise { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:none} }
+  @media (max-width:560px){ body{padding:44px 16px} h1{font-size:26px} .state{grid-template-columns:15px 1fr} .state .nm,.state .ds{grid-column:2} }
 </style>
 </head>
-<body>
-  <aside>
-    <div class="brand"><span class="led"></span>claude-statusline</div>
-    <div class="brand-title">Guia da status line</div>
-    <nav>${nav}</nav>
-  </aside>
-  <main>${body}</main>
-  <script>
-    // Realça o link da seção visível na sidebar (scroll-spy simples).
-    const links = [...document.querySelectorAll('.navlink')];
-    const map = new Map(links.map(l => [l.dataset.sec, l]));
-    const obs = new IntersectionObserver((es) => {
-      es.forEach(e => { if (e.isIntersecting) {
-        links.forEach(l => l.classList.remove('active'));
-        map.get(e.target.id)?.classList.add('active');
-      }});
-    }, { rootMargin: '-20% 0px -70% 0px' });
-    document.querySelectorAll('section').forEach(s => obs.observe(s));
-  </script>
+<body><div class="wrap">
+  <div class="eyebrow"><span class="led"></span>claude-statusline · guia</div>
+  <h1><span class="grad">O que cada coisa significa</span></h1>
+  <p class="lead">Duas linhas no rodapé do Claude Code: a de cima é <b>contexto</b> (onde você está), a de baixo é <b>métricas</b> (o que está consumindo).</p>
+
+  <div class="mock">
+    <div class="mock-bar"><span class="tl r"></span><span class="tl y"></span><span class="tl g"></span><span class="ttl">claude — statusline</span></div>
+    <div class="mock-body"><span class="g3">╭─</span>  ~/code/projeto · ⎇ main +3 ~2 · 󰚩 Opus · high
+<span class="g3">╰─</span>  $0.42 ·  219k ctx · last +187 ·  18m · ███████░░░ 73%  +156/-23 · ● 5h · resets in 2h · 🏃 fast 1.4× · twt metrics: <span class="ok">stats</span> · <span class="bad">otel</span> <span class="g3">(?)</span></div>
+  </div>
+
+  <div class="section-label">Linha 1 — contexto</div>
+  <section id="path"><div class="card"><div class="card-head"><span class="chip">~/…</span><h2>Diretório</h2></div>
+    <p>Diretório de trabalho atual (ou <span class="mono">owner/repo · host</span> se for um repo git com remote). Caminho profundo encurta pra <span class="mono">~/…/projeto/src</span>.</p></div></section>
+  <section id="git"><div class="card"><div class="card-head"><span class="chip">⎇</span><h2>Git</h2></div>
+    <p><b>main</b> = branch · <b>↑N/↓N</b> = ahead/behind · <b>+N</b> novos · <b>~N</b> modificados · <b>−N</b> deletados.</p>
+    <div class="states"><div class="state g"><span class="dot"></span><span class="nm">Verde</span><span class="ds">limpo, sem mudanças</span></div>
+    <div class="state y"><span class="dot"></span><span class="nm">Âmbar</span><span class="ds">dirty (tem mudanças)</span></div></div></div></section>
+  <section id="model"><div class="card"><div class="card-head"><span class="chip">󰚩</span><h2>Modelo &amp; effort</h2></div>
+    <p><span class="mono">󰚩 Opus 4.7</span> — modelo ativo. <span class="mono">high/med/low</span> — effort (campo <span class="mono">effortLevel</span>, só aparece se setado). <span class="mono">wt:nome</span> — worktree, se estiver em um.</p></div></section>
+
+  <div class="section-label">Linha 2 — métricas</div>
+  <section id="cost"><div class="card"><div class="card-head"><span class="chip"> $</span><h2>Custo</h2></div>
+    <p>Custo total em USD da sessão (<span class="mono">cost.total_cost_usd</span>).</p></div></section>
+  <section id="ctx"><div class="card"><div class="card-head"><span class="chip"> ctx</span><h2>Contexto · last</h2></div>
+    <p>O Claude Code <b>não dá contadores acumulados</b> de tokens — só snapshots do turno. Então:</p>
+    <p><b>219k ctx</b> = tamanho do contexto <b>agora</b> (system prompt + tools + CLAUDE.md + histórico). Até um "oi" mostra ~8k: é o overhead fixo. &nbsp;<b>last +187</b> = output <i>só do último turno</i>, não um total de sessão.</p></div></section>
+  <section id="time"><div class="card"><div class="card-head"><span class="chip"></span><h2>Tempo</h2></div>
+    <p>Wall-clock da sessão — desde que você abriu o Claude Code.</p></div></section>
+  <section id="ctxbar"><div class="card"><div class="card-head"><span class="chip"></span><h2>Barra de contexto</h2></div>
+    <p>Quanto do contexto já está cheio. Passando de 100%, o Claude compacta.</p>
+    <div class="states"><div class="state g"><span class="dot"></span><span class="nm">&lt; 50%</span><span class="ds">bem livre</span></div>
+    <div class="state y"><span class="dot"></span><span class="nm">50–79%</span><span class="ds">preparando compaction</span></div>
+    <div class="state rd"><span class="dot"></span><span class="nm">≥ 80%</span><span class="ds">vai compactar em breve</span></div></div></div></section>
+  <section id="lines"><div class="card"><div class="card-head"><span class="chip">+/−</span><h2>Linhas</h2></div>
+    <p>Linhas adicionadas / removidas na sessão. Só aparece quando você editou algo.</p></div></section>
+  <section id="rl5h"><div class="card"><div class="card-head"><span class="chip">●</span><h2>Rate limit 5h · a bolinha</h2></div>
+    <p>A bolinha reflete <b>só o % bruto de uso</b> do limite de 5h, <b>ignorando o tempo</b>. Usou 5%? Verde, mesmo com pace alto. <span class="mono">resets in Xh</span> = tempo até zerar.</p>
+    <div class="states"><div class="state g"><span class="dot"></span><span class="nm">&lt; 50%</span><span class="ds">tranquilo</span></div>
+    <div class="state y"><span class="dot"></span><span class="nm">50–79%</span><span class="ds">atenção</span></div>
+    <div class="state rd"><span class="dot"></span><span class="nm">≥ 80%</span><span class="ds">perto do teto</span></div></div></div></section>
+  <section id="pace"><div class="card"><div class="card-head"><span class="chip">🏃</span><h2>Pace — "estou gastando rápido demais?"</h2></div>
+    <p>Multiplicador <b>independente da bolinha</b>: <span class="mono">uso ÷ tempo_decorrido</span> (frações da janela de 5h). <b>1.0×</b> = bate 100% exatamente no reset · <b>&lt;1</b> folga · <b>&gt;1</b> bate o teto antes.</p>
+    <div class="states"><div class="state g"><span class="dot"></span><span class="nm">🐢 chill</span><span class="ds">&lt; 0.7× — gasta à vontade</span></div>
+    <div class="state g"><span class="dot"></span><span class="nm">🚶 ok</span><span class="ds">0.7–1.1× — no ritmo</span></div>
+    <div class="state y"><span class="dot"></span><span class="nm">🏃 fast</span><span class="ds">1.1–1.5× — segura um pouco</span></div>
+    <div class="state rd"><span class="dot"></span><span class="nm">🔥 hot</span><span class="ds">&gt; 1.5× — vai bater o teto cedo</span></div></div>
+    <p style="margin-top:14px"><b>warming</b>: nos primeiros ~30min o número é real mas oscila (denominador minúsculo). Some sozinho depois.</p></div></section>
+
+  <div class="section-label">twt metrics — ingestão</div>
+  <section id="twt-metrics"><div class="card"><div class="card-head"><span class="chip">twt</span><h2>Seus dados estão chegando?</h2></div>
+    <p>Dois sinais que dizem se o seu uso do Claude está chegando ao servidor de métricas. Cada um vigia um caminho diferente. <b>Cor:</b> <span class="dot g" style="display:inline-block;box-shadow:0 0 8px var(--green)"></span> verde = chegando · <span class="dot y" style="display:inline-block;box-shadow:0 0 8px var(--amber)"></span> âmbar = desconhecido · <span class="dot rd" style="display:inline-block;box-shadow:0 0 8px var(--red)"></span> vermelho = não chega.</p></div></section>
+  <section id="stats"><div class="card stats"><div class="card-head"><span class="chip">stats</span><h2>Heartbeat do statusline</h2></div>
+    <p>O ingest clássico: a cada ~60s manda um resumo da sessão — <b>custo, rate-limit, contexto, linhas, repo</b>. É a fonte que o OpenTelemetry <i>não enxerga</i>.</p>
+    <div class="states"><div class="state g"><span class="dot"></span><span class="nm">Verde</span><span class="ds">último heartbeat <b>aceito</b> pelo servidor</span></div>
+    <div class="state y"><span class="dot"></span><span class="nm">Âmbar</span><span class="ds">sem resposta recente ainda</span></div></div></div></section>
+  <section id="otel"><div class="card otel"><div class="card-head"><span class="chip">otel</span><h2>OpenTelemetry do Claude Code</h2></div>
+    <p>Telemetria <b>profunda</b> do próprio Claude Code: <b>tools, MCP e skills</b> usadas, <b>tokens e custo por turno</b>, commits, PRs e <b>erros</b>. O statusline configura sozinho; o servidor confirma se recebe.</p>
+    <div class="states"><div class="state g"><span class="dot"></span><span class="nm">Verde</span><span class="ds">servidor recebeu OTel na última hora</span></div>
+    <div class="state y"><span class="dot"></span><span class="nm">Âmbar</span><span class="ds">desconhecido (sem heartbeat recente)</span></div>
+    <div class="state rd"><span class="dot"></span><span class="nm">Vermelho</span><span class="ds">não chega. Causa comum: <b>reinicie o Claude Code</b> (OTel só ativa no restart). Persistindo, fale com o time.</span></div></div></div></section>
+
+  <div class="section-label">Atualização</div>
+  <section id="update"><div class="card"><div class="card-head"><span class="chip">⬆</span><h2>Update disponível</h2></div>
+    <p>Tem versão nova. Pra instalar: <span class="mono">claude-statusline update</span>. Esconder o badge: <span class="mono">CLAUDE_STATUSLINE_NO_UPDATE_BADGE=1</span>.</p></div></section>
+
+  <p class="foot">claude-statusline · twt metrics &nbsp;·&nbsp; esconder os indicadores: <code>CLAUDE_STATUSLINE_NO_INGEST_BADGE=1</code></p>
+</div>
+<script>
+  // Scroll pra seção do #hash — funciona no load E quando a página JÁ está aberta
+  // numa aba e o terminal reabre com outro #hash (o browser não re-scrolla sozinho).
+  // Também dá um flash visual no card alvo pra deixar claro onde você chegou.
+  function gotoHash() {
+    var id = (location.hash || '').slice(1);
+    if (!id) return;
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    var card = el.querySelector('.card') || el;
+    card.style.transition = 'box-shadow .4s, border-color .4s';
+    card.style.boxShadow = '0 0 0 1px var(--accent), 0 0 30px -4px var(--accent)';
+    card.style.borderColor = 'var(--accent)';
+    setTimeout(function () { card.style.boxShadow = ''; card.style.borderColor = ''; }, 1400);
+  }
+  window.addEventListener('hashchange', gotoHash);
+  // No load: espera o layout assentar antes de rolar (file:// + render assíncrono).
+  if (location.hash) { window.addEventListener('load', function(){ setTimeout(gotoHash, 60); }); }
+</script>
 </body></html>`;
 
   try { if (fs.readFileSync(HELP_HTML, 'utf8') === html) return; } catch {}
