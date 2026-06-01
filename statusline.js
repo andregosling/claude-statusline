@@ -100,22 +100,30 @@ function termWidth() {
 }
 
 // Largura VISÍVEL de uma string: remove sequências ANSI (cor SGR + OSC 8 links)
-// e conta glyphs largos (emoji / CJK) como 2 colunas. Nerd Font (PUA) conta 1.
+// e conta glyphs largos como 2 colunas. Inclui CJK, emoji E os ícones Nerd Font
+// (Private Use Area: E000–F8FF e F0000+), que a maioria dos terminais com Nerd
+// Font renderiza como DOUBLE-WIDTH — contá-los como 1 fazia a linha estourar e o
+// Claude Code truncar com "…". (Modo PLAIN usa ASCII de largura 1 e nem chega aqui.)
 // eslint-disable-next-line no-control-regex
 const ANSI_SGR = /\x1b\[[0-9;]*m/g;
 // eslint-disable-next-line no-control-regex
 const ANSI_OSC8 = /\x1b\]8;;[^\x07]*\x07/g;
+function isWide(cp) {
+  return (
+    (cp >= 0x1100 && cp <= 0x115f) ||  // Hangul Jamo
+    (cp >= 0x2e80 && cp <= 0xa4cf) ||  // CJK
+    (cp >= 0xac00 && cp <= 0xd7a3) ||  // Hangul
+    (cp >= 0xe000 && cp <= 0xf8ff) ||  // PUA (Nerd Font básico: powerline, fa, etc.)
+    (cp >= 0xf900 && cp <= 0xfaff) ||  // CJK Compat
+    (cp >= 0xff00 && cp <= 0xff60) ||  // Fullwidth
+    (cp >= 0x1f300 && cp <= 0x1faff) || // emoji
+    (cp >= 0xf0000 && cp <= 0xffffd)   // PUA-A (Nerd Font: material design icons 󰀀+)
+  );
+}
 function visibleWidth(s) {
   const plain = s.replace(ANSI_OSC8, '').replace(ANSI_SGR, '');
   let w = 0;
-  for (const ch of plain) {
-    const cp = ch.codePointAt(0);
-    if (
-      (cp >= 0x1100 && cp <= 0x115f) || (cp >= 0x2e80 && cp <= 0xa4cf) ||
-      (cp >= 0xac00 && cp <= 0xd7a3) || (cp >= 0xf900 && cp <= 0xfaff) ||
-      (cp >= 0xff00 && cp <= 0xff60) || (cp >= 0x1f300 && cp <= 0x1faff)
-    ) { w += 2; } else { w += 1; }
-  }
+  for (const ch of plain) w += isWide(ch.codePointAt(0)) ? 2 : 1;
   return w;
 }
 
@@ -1190,7 +1198,10 @@ async function main() {
   // Assim o nº de marcadores sempre bate com o nº de linhas; tela larga = 2 linhas
   // (╭─/╰─), igual antes. O conector ocupa 3 cols → descontadas da largura.
   const W = termWidth();
-  const avail = W ? W - 3 : null;
+  // Desconta o conector da árvore (3 cols: "╭─ ") + margem de segurança (2) pra
+  // absorver imprecisão na medição de glyphs Nerd Font / emoji. Quebrar um pouco
+  // antes é inofensivo; estourar faz o Claude Code truncar com "…".
+  const avail = W ? W - 5 : null;
   const blocks = [...reflowLine(line1, avail, ''), ...reflowLine(line2, avail, '')];
 
   const treeGlyph = (i, n) =>
