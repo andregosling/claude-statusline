@@ -29,6 +29,9 @@ const TELEMETRY_LOG = path.join(CACHE_DIR, 'telemetry.log');
 // O bg-heartbeat escreve; o render lê (defasagem de ~1 ciclo, igual LAST_HEARTBEAT).
 const INGEST_HEALTH_CACHE = path.join(CACHE_DIR, 'ingest-health.json');
 const HELP_HTML = path.join(CACHE_DIR, 'statusline-help.html');
+// Diagnóstico ao vivo injetado no help (window.DIAG). Reescrito a cada render
+// (leve); o HTML carrega via <script src> local — file:// permite tag script.
+const HELP_DATA_JS = path.join(CACHE_DIR, 'statusline-help-data.js');
 // Throttle do enforce de OTel — settings.json muda raramente, não reescrever a cada render.
 const OTEL_ENFORCE_THROTTLE_MS = 6 * 60 * 60 * 1000; // 6h
 const OTEL_ENFORCE_CACHE = path.join(CACHE_DIR, 'otel-enforce');
@@ -459,6 +462,7 @@ function updateBadge() {
 function helpAnchor(content, anchor) {
   if (process.env.CLAUDE_STATUSLINE_NO_HELP === '1') return content;
   try { writeHelpHtml(); } catch {}
+  try { writeHelpData(); } catch {} // diagnóstico fresco a cada render
   const BEL = '\x07';
   const url = `file://${HELP_HTML}${anchor ? '#' + anchor : ''}`;
   return `${ESC}]8;;${url}${BEL}${content}${ESC}]8;;${BEL}`;
@@ -507,10 +511,77 @@ function ingestHealthBadge() {
   return `${SEP}${C.label}twt metrics:${RESET} ${stats}${C.rule} · ${RESET}${otel}`;
 }
 
-// Gera o help.html completo (standalone, zero deps): cards com glow neon, mock da
-// status line no topo, dots de cor vivos. Cada card tem id pra âncora (#stats etc).
+// Coleta o estado ao vivo dos dois pipelines + saúde/config + últimos eventos,
+// lendo os caches locais. Vira window.DIAG no help (painel de diagnóstico).
+function collectDiagnostics() {
+  const now = Date.now();
+  let health = null;
+  try { health = JSON.parse(fs.readFileSync(INGEST_HEALTH_CACHE, 'utf8')); } catch {}
+
+  let lastHb = null;
+  try { lastHb = Number(fs.readFileSync(LAST_HEARTBEAT, 'utf8')) || null; } catch {}
+
+  // Últimas ~12 linhas do log de telemetria (eventos/erros recentes).
+  let events = [];
+  try {
+    const lines = fs.readFileSync(TELEMETRY_LOG, 'utf8').trim().split('\n');
+    events = lines.slice(-12).map((l) => {
+      const m = l.match(/^\[([^\]]+)\]\s*(.*)$/);
+      return m ? { ts: m[1], msg: m[2] } : { ts: '', msg: l };
+    }).reverse();
+  } catch {}
+
+  // settings.json do CC tem o OTel configurado?
+  let otelConfigured = false;
+  try {
+    const s = JSON.parse(fs.readFileSync(CLAUDE_SETTINGS_PATH, 'utf8'));
+    otelConfigured = !!(s && s.env && s.env.CLAUDE_CODE_ENABLE_TELEMETRY === '1' &&
+      s.env.OTEL_EXPORTER_OTLP_ENDPOINT);
+  } catch {}
+
+  // Estado derivado de cada pipeline: { color, title, why }.
+  let stats, otel;
+  if (!health) {
+    stats = { color: 'y', title: 'desconhecido', why: 'Nenhum heartbeat enviado ainda nesta sessão (acabou de abrir, ou aguardando o primeiro envio ~60s).' };
+    otel = { color: 'y', title: 'desconhecido', why: 'Sem heartbeat recente, não dá pra perguntar ao servidor se o OTel está chegando.' };
+  } else if (!health.manual_ingest_ok) {
+    stats = { color: 'r', title: 'falhando', why: `O heartbeat não está sendo aceito pelo servidor.${health.last_error ? ' Último erro: ' + health.last_error + '.' : ''} Endpoint: ${health.endpoint || TELEMETRY_API_URL}.` };
+    otel = { color: 'y', title: 'desconhecido', why: 'Como o heartbeat está falhando, não dá pra confirmar o estado do OTel.' };
+  } else {
+    stats = { color: 'g', title: 'recebendo', why: 'O servidor está aceitando seus heartbeats normalmente.' };
+    if (health.otel_ingest_ok) {
+      otel = { color: 'g', title: 'recebendo', why: `O servidor recebeu eventos OTel seus recentemente${health.otel_last_seen_at ? ' (último: ' + health.otel_last_seen_at + ')' : ''}.` };
+    } else {
+      otel = { color: 'r', title: 'não chega', why: `O servidor recebe seu heartbeat, mas NÃO está recebendo OTel do Claude Code.${otelConfigured ? ' A config existe — provável que falte REINICIAR o Claude Code (OTel só ativa no restart).' : ' O OTel ainda não foi configurado no settings.json — o statusline configura no próximo render.'}` };
+    }
+  }
+
+  return {
+    capturedAt: now,
+    endpoint: (health && health.endpoint) || TELEMETRY_API_URL,
+    lastHeartbeatAt: lastHb,
+    tokenPresent: !!loadToken(),
+    otelConfigured,
+    cliVersion: VERSION,
+    stats, otel,
+    events,
+  };
+}
+
+// Escreve o help-data.js (window.DIAG = {...}) — leve, reescrito a cada render.
+function writeHelpData() {
+  try {
+    const data = collectDiagnostics();
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    fs.writeFileSync(HELP_DATA_JS, `window.DIAG = ${JSON.stringify(data)};`);
+  } catch {}
+}
+
+// Gera o help.html completo (standalone, zero deps): painel de diagnóstico ao vivo
+// no topo (lê window.DIAG do help-data.js) + cards com glow neon explicando cada
+// segmento. Cada card tem id pra âncora (#stats etc).
 // Idempotente: só reescreve se o conteúdo mudou. Bump HELP_VERSION ao editar.
-const HELP_VERSION = 5;
+const HELP_VERSION = 6;
 function writeHelpHtml() {
   const html = `<!doctype html>
 <html lang="pt-br" data-v="${HELP_VERSION}">
@@ -577,6 +648,28 @@ function writeHelpHtml() {
   .foot code { font-family:var(--mono); background:var(--panel-2); border:1px solid var(--line); padding:2px 7px; border-radius:6px; color:var(--txt-2); font-size:11.5px; }
   section { scroll-margin-top:24px; }
   @keyframes rise { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:none} }
+  /* painel de diagnóstico */
+  .diag-age { font-family:var(--mono); font-size:10.5px; color:var(--txt-3); text-transform:none; letter-spacing:0; margin-left:8px; }
+  .diag-panel { border:1px solid var(--line); border-radius:14px; background:var(--panel); padding:20px 22px;
+    display:flex; flex-direction:column; gap:14px; box-shadow:0 20px 50px -30px rgba(0,0,0,.7); }
+  .diag-row { display:grid; grid-template-columns:14px 1fr; gap:13px; align-items:start; }
+  .diag-dot { width:11px; height:11px; border-radius:50%; margin-top:5px; background:var(--dc,var(--txt-3));
+    box-shadow:0 0 0 3px color-mix(in srgb,var(--dc,var(--txt-3)) 18%,transparent), 0 0 14px var(--dc,var(--txt-3)); }
+  .diag-dot.g{--dc:var(--green)} .diag-dot.y{--dc:var(--amber)} .diag-dot.r{--dc:var(--red)}
+  .diag-name { font-weight:600; font-size:15px; }
+  .diag-state { font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:6px; margin-left:6px; vertical-align:middle;
+    background:color-mix(in srgb,var(--sc,var(--txt-3)) 16%,transparent); color:var(--sc,var(--txt-2)); }
+  .diag-state.g{--sc:var(--green)} .diag-state.y{--sc:var(--amber)} .diag-state.r{--sc:var(--red)}
+  .diag-why { color:var(--txt-2); font-size:13.5px; margin-top:3px; line-height:1.5; }
+  .diag-why b { color:var(--txt); }
+  .diag-meta { display:flex; flex-wrap:wrap; gap:8px 18px; padding-top:13px; border-top:1px solid var(--line-2);
+    font-family:var(--mono); font-size:11.5px; color:var(--txt-3); }
+  .diag-meta b { color:var(--txt-2); font-weight:500; }
+  .diag-events { border-top:1px solid var(--line-2); padding-top:13px; display:flex; flex-direction:column; gap:5px; }
+  .diag-events .ev { font-family:var(--mono); font-size:11px; color:var(--txt-3); display:flex; gap:10px; }
+  .diag-events .ev .t { color:var(--txt-3); opacity:.7; white-space:nowrap; }
+  .diag-events .ev .m { color:var(--txt-2); } .diag-events .ev.err .m { color:#f88; }
+  .diag-empty { color:var(--txt-3); font-size:13px; font-style:italic; }
   @media (max-width:560px){ body{padding:44px 16px} h1{font-size:26px} .state{grid-template-columns:15px 1fr} .state .nm,.state .ds{grid-column:2} }
 </style>
 </head>
@@ -590,6 +683,20 @@ function writeHelpHtml() {
     <div class="mock-body"><span class="g3">╭─</span>  ~/code/projeto · ⎇ main +3 ~2 · 󰚩 Opus · high
 <span class="g3">╰─</span>  $0.42 ·  219k ctx · last +187 ·  18m · ███████░░░ 73%  +156/-23 · ● 5h · resets in 2h · 🏃 fast 1.4× · twt metrics: <span class="ok">stats</span> · <span class="bad">otel</span> <span class="g3">(?)</span></div>
   </div>
+
+  <!-- Painel de diagnóstico ao vivo (preenchido via window.DIAG do help-data.js) -->
+  <section id="diagnostico"><div class="section-label" style="margin-top:34px">Diagnóstico agora <span id="diag-age" class="diag-age"></span></div>
+    <div id="diag-panel" class="diag-panel">
+      <div class="diag-row"><span class="dot diag-dot" id="diag-stats-dot"></span>
+        <div><div class="diag-name">stats <span id="diag-stats-state" class="diag-state"></span></div>
+        <div class="diag-why" id="diag-stats-why">—</div></div></div>
+      <div class="diag-row"><span class="dot diag-dot" id="diag-otel-dot"></span>
+        <div><div class="diag-name">otel <span id="diag-otel-state" class="diag-state"></span></div>
+        <div class="diag-why" id="diag-otel-why">—</div></div></div>
+      <div class="diag-meta" id="diag-meta"></div>
+      <div class="diag-events" id="diag-events"></div>
+    </div>
+  </section>
 
   <div class="section-label">Linha 1 — contexto</div>
   <section id="path"><div class="card"><div class="card-head"><span class="chip">~/…</span><h2>Diretório</h2></div>
@@ -648,6 +755,51 @@ function writeHelpHtml() {
 
   <p class="foot">claude-statusline · twt metrics &nbsp;·&nbsp; esconder os indicadores: <code>CLAUDE_STATUSLINE_NO_INGEST_BADGE=1</code></p>
 </div>
+<script src="${path.basename(HELP_DATA_JS)}"></script>
+<script>
+  // Preenche o painel de diagnóstico com window.DIAG (do help-data.js, gerado a
+  // cada render do statusline). É um SNAPSHOT — recarregue (Cmd+R) pra atualizar.
+  (function () {
+    var d = window.DIAG;
+    var panel = document.getElementById('diag-panel');
+    if (!d) { if (panel) panel.innerHTML = '<div class="diag-empty">Sem dados de diagnóstico ainda — abra após o primeiro heartbeat.</div>'; return; }
+    function set(id, txt) { var e = document.getElementById(id); if (e) e.textContent = txt; }
+    function cls(id, base, c) { var e = document.getElementById(id); if (e) e.className = base + ' ' + c; }
+    // idade do snapshot
+    var ageMs = Date.now() - (d.capturedAt || Date.now());
+    var ageS = Math.round(ageMs / 1000);
+    var ageStr = ageS < 60 ? ('há ' + ageS + 's') : ('há ' + Math.round(ageS / 60) + 'min');
+    set('diag-age', '· capturado ' + ageStr + ' · recarregue (Cmd+R) pra atualizar');
+    // pipelines
+    var L = { g: 'OK', y: 'desconhecido', r: 'problema' };
+    cls('diag-stats-dot', 'dot diag-dot', d.stats.color);
+    set('diag-stats-state', d.stats.title); cls('diag-stats-state', 'diag-state', d.stats.color);
+    set('diag-stats-why', d.stats.why);
+    cls('diag-otel-dot', 'dot diag-dot', d.otel.color);
+    set('diag-otel-state', d.otel.title); cls('diag-otel-state', 'diag-state', d.otel.color);
+    set('diag-otel-why', d.otel.why);
+    // meta (saúde/config)
+    var hb = d.lastHeartbeatAt ? ('há ' + Math.round((Date.now() - d.lastHeartbeatAt) / 1000) + 's') : 'nunca';
+    var meta = document.getElementById('diag-meta');
+    if (meta) meta.innerHTML =
+      '<span>endpoint: <b>' + esc(d.endpoint) + '</b></span>' +
+      '<span>último heartbeat: <b>' + hb + '</b></span>' +
+      '<span>token: <b>' + (d.tokenPresent ? 'presente' : 'ausente') + '</b></span>' +
+      '<span>OTel configurado: <b>' + (d.otelConfigured ? 'sim' : 'não') + '</b></span>' +
+      '<span>CC statusline: <b>v' + esc(d.cliVersion) + '</b></span>';
+    // eventos recentes
+    var ev = document.getElementById('diag-events');
+    if (ev) {
+      if (!d.events || !d.events.length) { ev.innerHTML = '<div class="diag-empty">Sem eventos recentes no log.</div>'; }
+      else ev.innerHTML = d.events.map(function (e) {
+        var isErr = /erro|error|exception|fail|refused|ECONN|timeout|401/i.test(e.msg);
+        var t = (e.ts || '').replace('T', ' ').replace(/\\..*$/, '').slice(11);
+        return '<div class="ev' + (isErr ? ' err' : '') + '"><span class="t">' + esc(t) + '</span><span class="m">' + esc(e.msg) + '</span></div>';
+      }).join('');
+    }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
+  })();
+</script>
 <script>
   // Scroll pra seção do #hash — funciona no load E quando a página JÁ está aberta
   // numa aba e o terminal reabre com outro #hash (o browser não re-scrolla sozinho).
@@ -1017,6 +1169,11 @@ function maybeEnforceOtelConfig() {
     OTEL_EXPORTER_OTLP_ENDPOINT: TELEMETRY_API_URL,
     OTEL_EXPORTER_OTLP_HEADERS: `Authorization=Bearer ${token}`,
     OTEL_METRICS_INCLUDE_VERSION: 'true',
+    // Detalhes de tool/MCP/skill: nome do MCP server, comando Bash, skill name,
+    // subagent type, file paths. Enriquece o dashboard (mcp_usage por nome real,
+    // ferramentas detalhadas). Interno/time confiável — sanitização de paths fica
+    // no servidor (PayloadSanitizerService) se necessário.
+    OTEL_LOG_TOOL_DETAILS: '1',
   };
 
   try {
