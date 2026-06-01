@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Two-line dashboard status line for Claude Code.
 // Works on macOS, Linux, and Windows with zero external dependencies (only Node, which Claude Code already ships).
-// VERSION: 2.6.2
+// VERSION: 2.7.0
 // REPO: https://github.com/andregosling/claude-statusline
 
 'use strict';
@@ -13,7 +13,7 @@ const crypto = require('crypto');
 const { execSync, spawn } = require('child_process');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const VERSION = '2.6.2';
+const VERSION = '2.7.0';
 const REPO_RAW = 'https://raw.githubusercontent.com/andregosling/claude-statusline/main';
 const CACHE_DIR = path.join(os.homedir(), '.claude', 'cache', 'claude-statusline');
 const LAST_CHECK = path.join(CACHE_DIR, 'last-check');
@@ -89,6 +89,61 @@ const G = PLAIN ? {
   rate: '',       //
   tl: '╭─', bl: '╰─',
 };
+
+// ── Responsividade: reflow por largura do terminal ─────────────────────────────
+// O Claude Code (>= 2.1.153) seta COLUMNS/LINES antes de rodar o statusline
+// (tput/stdout.columns NÃO funcionam — o output é capturado, não é um TTY).
+// Versões antigas não setam → COLUMNS vem vazio → fallback: sem reflow (2 linhas fixas).
+function termWidth() {
+  const c = Number(process.env.COLUMNS);
+  return Number.isFinite(c) && c > 0 ? c : null;
+}
+
+// Largura VISÍVEL de uma string: remove sequências ANSI (cor SGR + OSC 8 links)
+// e conta glyphs largos (emoji / CJK) como 2 colunas. Nerd Font (PUA) conta 1.
+// eslint-disable-next-line no-control-regex
+const ANSI_SGR = /\x1b\[[0-9;]*m/g;
+// eslint-disable-next-line no-control-regex
+const ANSI_OSC8 = /\x1b\]8;;[^\x07]*\x07/g;
+function visibleWidth(s) {
+  const plain = s.replace(ANSI_OSC8, '').replace(ANSI_SGR, '');
+  let w = 0;
+  for (const ch of plain) {
+    const cp = ch.codePointAt(0);
+    if (
+      (cp >= 0x1100 && cp <= 0x115f) || (cp >= 0x2e80 && cp <= 0xa4cf) ||
+      (cp >= 0xac00 && cp <= 0xd7a3) || (cp >= 0xf900 && cp <= 0xfaff) ||
+      (cp >= 0xff00 && cp <= 0xff60) || (cp >= 0x1f300 && cp <= 0x1faff)
+    ) { w += 2; } else { w += 1; }
+  }
+  return w;
+}
+
+// Reflow: quebra uma linha montada (com ANSI) em N sublinhas que cabem em `width`,
+// usando ` · ` (SEP visível) como ponto natural de quebra. Continuações ganham
+// recuo de 2 espaços. Sem width → devolve a linha intacta (1 elemento).
+function reflowLine(line, width, indent = '  ') {
+  if (!width) return [line];
+  const parts = line.split(' · ');
+  if (parts.length === 1) return [line];
+  const out = [];
+  let cur = '';
+  let curW = 0;
+  for (const seg of parts) {
+    const segW = visibleWidth(seg);
+    const wWithSep = cur === '' ? segW : curW + 3 + segW; // " · " = 3 cols
+    if (cur !== '' && wWithSep > width) {
+      out.push(cur);
+      cur = indent + seg;
+      curW = visibleWidth(indent) + segW;
+    } else {
+      cur = cur === '' ? seg : cur + ' · ' + seg;
+      curW = wWithSep;
+    }
+  }
+  if (cur !== '') out.push(cur);
+  return out;
+}
 
 // ── Safe getters ──────────────────────────────────────────────────────────────
 function pick(obj, p, dflt) {
@@ -1122,10 +1177,12 @@ async function main() {
     }
   }
 
-  const output = authLine
-    ? `${line1}\n${line2}\n${authLine}\n`
-    : `${line1}\n${line2}\n`;
-  process.stdout.write(output);
+  // Responsividade: se o terminal for estreito, quebra cada linha em sublinhas
+  // (pelos separadores ` · `) em vez de deixar o terminal cortar/estourar feio.
+  const W = termWidth();
+  const lines = [...reflowLine(line1, W), ...reflowLine(line2, W)];
+  if (authLine) lines.push(...reflowLine(authLine, W));
+  process.stdout.write(lines.join('\n') + '\n');
 
   // Fire-and-forget background update check (triggers on new session or 24h elapsed)
   maybeScheduleUpdate(sessionId);
