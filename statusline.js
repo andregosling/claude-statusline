@@ -74,7 +74,7 @@ const PLAIN = process.env.CLAUDE_STATUSLINE_PLAIN === '1';
 const G = PLAIN ? {
   folder: '', branch: 'git:', add: '+', mod: '~', del: '-',
   ahead: '↑', behind: '↓', model: '◆', cost: '$', token: 'T',
-  clock: 't:', ctx: 'ctx', rate: '*', tl: '╭─', bl: '╰─',
+  clock: 't:', ctx: 'ctx', rate: '*', tl: '╭─', mid: '│ ', bl: '╰─',
 } : {
   folder: '',     //
   branch: '',     //
@@ -87,7 +87,7 @@ const G = PLAIN ? {
   clock: '',      //
   ctx: '',        //
   rate: '',       //
-  tl: '╭─', bl: '╰─',
+  tl: '╭─', mid: '│ ', bl: '╰─',
 };
 
 // ── Responsividade: reflow por largura do terminal ─────────────────────────────
@@ -1150,14 +1150,14 @@ async function main() {
     rlBadge = badge;
   }
 
-  let line1 = `${C.rule}${G.tl}${RESET} ${C.path}${BOLD}${G.folder} ${pathStr}${RESET}`;
+  let line1 = `${C.path}${BOLD}${G.folder} ${pathStr}${RESET}`;
   if (gitStr) line1 += `${SEP}${gitStr}`;
   line1 += `${SEP}${C.model}${G.model} ${modelStr}${RESET}${effortBadge}${wtBadge}`;
 
   // Tokens segment: "219.4k ctx · last +187"
   //   "219.4k ctx" = current context window size (the meaningful number)
   //   "last +187"  = output of the most recent turn (snapshot — NOT a session total)
-  const line2 = `${C.rule}${G.bl}${RESET} ${C.cost}${G.cost} ${fmtCost(cost)}${RESET}${SEP}` +
+  const line2 = `${C.cost}${G.cost} ${fmtCost(cost)}${RESET}${SEP}` +
     `${C.tokens}${G.token} ${fmtTokens(ctxTokens)} ctx${RESET} ${C.rule}·${RESET} ${C.label}last +${fmtTokens(lastOut)}${RESET}${SEP}` +
     `${C.time}${G.clock} ${fmtDuration(durMs)}${RESET}${SEP}` +
     `${ctxC}${G.ctx} ${bar} ${Math.floor(Number(ctxPct) || 0)}%${RESET}` +
@@ -1177,11 +1177,30 @@ async function main() {
     }
   }
 
-  // Responsividade: se o terminal for estreito, quebra cada linha em sublinhas
-  // (pelos separadores ` · `) em vez de deixar o terminal cortar/estourar feio.
+  // Responsividade + árvore: line1 e line2 viram um FLUXO ÚNICO de segmentos
+  // (separados por ` · `). O reflow quebra esse fluxo em N "blocos" que cabem na
+  // largura; cada bloco vira uma linha com seu próprio conector de árvore:
+  //   1ª linha → ╭─ (topo) · linhas do meio → │ · última → ╰─ (base).
+  // Assim o número de marcadores SEMPRE bate com o número de linhas.
+  // O prefixo do conector (2 cols) é descontado da largura disponível no reflow.
+  // line1 (path/git/model) e line2 (custo/ctx/métricas) são DUAS SEÇÕES
+  // INDEPENDENTES — nunca se fundem. Cada uma quebra DENTRO de si quando o
+  // terminal aperta. Os marcadores formam UMA árvore contínua sobre o bloco
+  // inteiro: ╭─ na 1ª linha de tudo, ╰─ na última, │ em todas do meio.
+  // Assim o nº de marcadores sempre bate com o nº de linhas; tela larga = 2 linhas
+  // (╭─/╰─), igual antes. O conector ocupa 3 cols → descontadas da largura.
   const W = termWidth();
-  const lines = [...reflowLine(line1, W), ...reflowLine(line2, W)];
-  if (authLine) lines.push(...reflowLine(authLine, W));
+  const avail = W ? W - 3 : null;
+  const blocks = [...reflowLine(line1, avail, ''), ...reflowLine(line2, avail, '')];
+
+  const treeGlyph = (i, n) =>
+    i === 0 ? G.tl : i === n - 1 ? G.bl : G.mid;
+  const lines = blocks.map(
+    (b, i) => `${C.rule}${treeGlyph(i, blocks.length)}${RESET} ${b}`,
+  );
+  if (authLine) {
+    for (const a of reflowLine(authLine, W)) lines.push(a);
+  }
   process.stdout.write(lines.join('\n') + '\n');
 
   // Fire-and-forget background update check (triggers on new session or 24h elapsed)
