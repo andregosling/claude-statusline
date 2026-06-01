@@ -270,9 +270,12 @@ function modelDisplay(id, display) {
 //   - more than 24h passed since the last check (covers marathon sessions).
 // Within the same session it never re-checks more than once per 24h, so no flood.
 function maybeScheduleUpdate(sessionId) {
-  // Dev kill-switch: set CLAUDE_STATUSLINE_NO_UPDATE=1 to prevent the background
-  // process from clobbering local edits. Critical while hacking on statusline.js.
-  if (process.env.CLAUDE_STATUSLINE_NO_UPDATE === '1') return;
+  // Auto-update DESARMADO por padrão nesta branch (feat/otel-indicators-responsive).
+  // O `main` no GitHub está em v2.6.1 — versão ANTIGA que ignora o kill-switch e
+  // rebaixaria o arquivo, clobberando estas mudanças (já aconteceu uma vez). Só
+  // religa com CLAUDE_STATUSLINE_NO_UPDATE=0 explícito. Ao mergear pro main com uma
+  // versão que respeite o kill-switch, voltar à condição `=== '1'` normal.
+  if (process.env.CLAUDE_STATUSLINE_NO_UPDATE !== '0') return;
   try {
     fs.mkdirSync(CACHE_DIR, { recursive: true });
 
