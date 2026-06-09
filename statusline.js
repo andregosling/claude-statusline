@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Two-line dashboard status line for Claude Code.
 // Works on macOS, Linux, and Windows with zero external dependencies (only Node, which Claude Code already ships).
-// VERSION: 2.8.0
+// VERSION: 2.8.1
 // REPO: https://github.com/andregosling/claude-statusline
 
 'use strict';
@@ -13,13 +13,18 @@ const crypto = require('crypto');
 const { execSync, spawn } = require('child_process');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const VERSION = '2.8.0';
+const VERSION = '2.8.1';
 const REPO_RAW = 'https://raw.githubusercontent.com/andregosling/claude-statusline/main';
 const CACHE_DIR = path.join(os.homedir(), '.claude', 'cache', 'claude-statusline');
 const LAST_CHECK = path.join(CACHE_DIR, 'last-check');
 const LAST_SESSION = path.join(CACHE_DIR, 'last-session');
 const REMOTE_VERSION_CACHE = path.join(CACHE_DIR, 'remote-version');
 const UPDATE_LOG = path.join(CACHE_DIR, 'update.log');
+// Marcador "atualizei o arquivo, mas o CC ainda roda a versão velha". Gravado pelo
+// backgroundUpdate ao sobrescrever; guarda { version, session_id }. O badge de
+// restart aparece enquanto o session_id atual == o gravado; some quando o CC
+// reinicia (session_id novo) e o marcador é limpo no próximo render.
+const PENDING_RESTART = path.join(CACHE_DIR, 'pending-restart.json');
 const LAST_HEARTBEAT = path.join(CACHE_DIR, 'last-heartbeat');
 const LAST_HB_MODEL = path.join(CACHE_DIR, 'last-heartbeat-model');
 const PENDING_AUTH = path.join(CACHE_DIR, 'pending-auth.json');
@@ -373,8 +378,10 @@ function maybeScheduleUpdate(sessionId) {
     if (!newSession && !stale) return;
     fs.writeFileSync(LAST_CHECK, String(Date.now()));
 
-    // Detach a background child that downloads + replaces self.
-    const child = spawn(process.execPath, [SELF_PATH, '--bg-update'], {
+    // Detach a background child that downloads + replaces self. Passa o session_id
+    // pra que, se atualizar, grave PENDING_RESTART carimbado com a sessão atual —
+    // o badge de restart usa isso pra sumir quando o CC reiniciar.
+    const child = spawn(process.execPath, [SELF_PATH, '--bg-update', sessionId || ''], {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
@@ -401,7 +408,7 @@ function fetchText(url) {
   });
 }
 
-async function backgroundUpdate() {
+async function backgroundUpdate(sessionId) {
   try {
     const remote = await fetchText(`${REPO_RAW}/statusline.js`);
     if (!remote || !remote.startsWith('#!')) return;
@@ -426,6 +433,9 @@ async function backgroundUpdate() {
     try { fs.chmodSync(SELF_PATH, 0o755); } catch {}
     fs.appendFileSync(UPDATE_LOG,
       `[${new Date().toISOString()}] updated to ${remoteVer}\n`);
+    // Carimba o restart pendente com a sessão atual. O badge mostra "reinicie pra
+    // concluir" enquanto essa sessão estiver viva; some no 1º render da sessão nova.
+    try { fs.writeFileSync(PENDING_RESTART, JSON.stringify({ version: remoteVer, session_id: sessionId || '' })); } catch {}
   } catch (e) {
     try {
       fs.appendFileSync(UPDATE_LOG,
@@ -453,6 +463,30 @@ function updateBadge() {
   const close = `${ESC}]8;;${BEL}`;
   // Amber + bold to catch the eye, but not blinking (real blink is hostile UX).
   return `${SEP}${C.cost}${BOLD}${open}⬆ v${remoteVer} available${close}${RESET}`;
+}
+
+// ── "Reinicie pra concluir" badge ─────────────────────────────────────────────
+// Aparece DEPOIS de um auto-update, enquanto o CC ainda roda na sessão em que o
+// arquivo foi sobrescrito. O backgroundUpdate gravou PENDING_RESTART carimbado
+// com aquele session_id. Lógica:
+//   - sem marcador            → nada
+//   - session_id != marcador  → o CC reiniciou; limpa o marcador e some
+//   - session_id == marcador  → ainda na sessão velha; mostra o badge
+// Assim o badge se auto-limpa no 1º render da sessão nova, sem heurística de tempo.
+// Suprime com CLAUDE_STATUSLINE_NO_UPDATE_BADGE=1 (mesmo switch do badge de update).
+function restartBadge(sessionId) {
+  if (process.env.CLAUDE_STATUSLINE_NO_UPDATE_BADGE === '1') return '';
+  let pending;
+  try { pending = JSON.parse(fs.readFileSync(PENDING_RESTART, 'utf8')); }
+  catch { return ''; }
+  if (!pending || !pending.version) return '';
+  // Sessão nova (ou sem id confiável no marcador) → update já "pegou", limpa.
+  if (!pending.session_id || (sessionId && sessionId !== pending.session_id)) {
+    try { fs.unlinkSync(PENDING_RESTART); } catch {}
+    return '';
+  }
+  const SEP = `${C.rule} · ${RESET}`;
+  return `${SEP}${C.cost}${BOLD}⬆ atualizado p/ v${pending.version} · reinicie para concluir a instalação${RESET}`;
 }
 
 // ── Clickable (?) help link via OSC 8 ─────────────────────────────────────────
@@ -1252,7 +1286,8 @@ function readStdin() {
 async function main() {
   // Background-update entry point: never runs render path
   if (process.argv.includes('--bg-update')) {
-    await backgroundUpdate();
+    const bgIdx = process.argv.indexOf('--bg-update');
+  await backgroundUpdate(process.argv[bgIdx + 1] || '');
     return;
   }
   if (process.argv.includes('--bg-auth-init')) {
@@ -1384,7 +1419,8 @@ async function main() {
     badge += RESET;
     if (paceX != null) {
       const warmTag = paceWarming ? ` ${DIM}(warming)${RESET}` : '';
-      badge += `${SEP}${paceColor}${paceIcon} ${paceLabel} ${paceX}×${RESET}${warmTag}`;
+      // TESTE: prefixo temporário pra validar o auto-update ao vivo. Remover no próximo bump.
+      badge += `${SEP}${paceColor}>> ${paceIcon} ${paceLabel} ${paceX}×${RESET}${warmTag}`;
     }
     rlBadge = badge;
   }
@@ -1480,7 +1516,7 @@ async function main() {
   // e o (?). Separada da linha 2 porque, mesmo em tela larga, juntar tudo poluía.
   // Os badges já começam com SEP (` · `); aparamos o SEP inicial deste fluxo pra
   // não sobrar separador solto no começo da linha.
-  let line3 = `${rl7Badge}${ingestHealthBadge()}${updateBadge()}${helpLink()}`;
+  let line3 = `${rl7Badge}${ingestHealthBadge()}${restartBadge(sessionId)}${updateBadge()}${helpLink()}`;
   // Apara um SEP inicial caso exista (todos os badges começam com ` · `). Sem
   // regex: o SEP contém ANSI com `[`, que vira classe inválida em RegExp.
   if (line3.startsWith(SEP)) line3 = line3.slice(SEP.length);
