@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Two-line dashboard status line for Claude Code.
 // Works on macOS, Linux, and Windows with zero external dependencies (only Node, which Claude Code already ships).
-// VERSION: 2.8.4
+// VERSION: 2.8.5
 // REPO: https://github.com/andregosling/claude-statusline
 
 'use strict';
@@ -13,7 +13,7 @@ const crypto = require('crypto');
 const { execSync, spawn } = require('child_process');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const VERSION = '2.8.4';
+const VERSION = '2.8.5';
 const REPO_RAW = 'https://raw.githubusercontent.com/andregosling/claude-statusline/main';
 const CACHE_DIR = path.join(os.homedir(), '.claude', 'cache', 'claude-statusline');
 const LAST_CHECK = path.join(CACHE_DIR, 'last-check');
@@ -480,9 +480,10 @@ async function backgroundUpdate(sessionId) {
     try { fs.chmodSync(SELF_PATH, 0o755); } catch {}
     fs.appendFileSync(UPDATE_LOG,
       `[${new Date().toISOString()}] updated ${VERSION} -> ${remoteVer}\n`);
-    // Carimba o restart pendente com a sessão atual. O badge mostra "reinicie pra
-    // concluir" enquanto essa sessão estiver viva; some no 1º render da sessão nova.
-    try { fs.writeFileSync(PENDING_RESTART, JSON.stringify({ version: remoteVer, session_id: sessionId || '' })); } catch {}
+    // Carimba o instante do update. O badge "⬆ atualizado p/ vX" mostra por 5 min
+    // a partir DAQUI (updated_at), independente de sessão. session_id fica só como
+    // contexto/diagnóstico.
+    try { fs.writeFileSync(PENDING_RESTART, JSON.stringify({ version: remoteVer, session_id: sessionId || '', updated_at: Date.now() })); } catch {}
     return true;
   } catch (e) {
     // Falha de rede/timeout/escrita: NÃO conclusiva. Retorna false pra que o
@@ -519,41 +520,20 @@ function updateBadge() {
 }
 
 // ── "Atualizado p/ vX" badge ──────────────────────────────────────────────────
-// Aviso informativo (sem pedir ação) que aparece nos PRIMEIROS 5 MIN da primeira
-// sessão NOVA depois de um auto-update — confirmando "você está rodando a versão
-// nova agora". O backgroundUpdate gravou PENDING_RESTART com { version, session_id }
-// (a sessão em que o arquivo foi sobrescrito — a "velha"). Lógica:
-//   - sem marcador                       → nada
-//   - ainda na sessão do update           → o CC ainda não reiniciou; não mostra
-//   - 1ª sessão nova: carimba shown_at     → começa a janela de 5 min
-//   - dentro dos 5 min, mesma sessão nova  → MOSTRA "⬆ atualizado p/ vX"
-//   - passou 5 min, OU trocou de sessão    → limpa e some pra sempre
+// Aviso informativo (sem pedir ação): "⬆ atualizado p/ vX", visível por 5 MIN a
+// partir do INSTANTE do update (updated_at, gravado pelo backgroundUpdate). Não
+// depende de sessão — passou a janela, some e limpa o marcador.
 // Suprime com CLAUDE_STATUSLINE_NO_UPDATE_BADGE=1 (mesmo switch do badge de update).
 const POST_UPDATE_NOTICE_MS = 5 * 60 * 1000; // 5 min
-function restartBadge(sessionId) {
+function restartBadge() {
   if (process.env.CLAUDE_STATUSLINE_NO_UPDATE_BADGE === '1') return '';
   let pending;
   try { pending = JSON.parse(fs.readFileSync(PENDING_RESTART, 'utf8')); }
   catch { return ''; }
-  if (!pending || !pending.version) return '';
+  if (!pending || !pending.version || !pending.updated_at) return '';
 
-  // Sem sessão confiável no payload → não dá pra cronometrar; descarta.
-  if (!sessionId) { try { fs.unlinkSync(PENDING_RESTART); } catch {} return ''; }
-
-  // Ainda na MESMA sessão em que o update foi aplicado: o CC não reiniciou, então
-  // o aviso "você está na versão nova" ainda não faz sentido. Espera reiniciar.
-  if (sessionId === pending.session_id) return '';
-
-  // Primeira sessão NOVA que vê este marcador → inicia a janela de 5 min, carimbando
-  // a sessão e o instante. (shown_session_id fixa a janela a ESTA sessão nova.)
-  if (pending.shown_session_id !== sessionId) {
-    pending.shown_session_id = sessionId;
-    pending.shown_at = Date.now();
-    try { fs.writeFileSync(PENDING_RESTART, JSON.stringify(pending)); } catch {}
-  }
-
-  // Passou a janela de 5 min → some pra sempre.
-  if (Date.now() - (pending.shown_at || 0) >= POST_UPDATE_NOTICE_MS) {
+  // Passou a janela de 5 min desde o update → some pra sempre.
+  if (Date.now() - pending.updated_at >= POST_UPDATE_NOTICE_MS) {
     try { fs.unlinkSync(PENDING_RESTART); } catch {}
     return '';
   }
@@ -1596,7 +1576,7 @@ async function main() {
   // TELEMETRY PAUSED (DNS pendente — reativar quando a infra atrelar o domínio):
   // os KPIs `twt metrics: stats · otel` saem da linha enquanto o endpoint não
   // tem DNS. Reverter: voltar ${ingestHealthBadge()} ao fluxo abaixo.
-  let line3 = `${rl7Badge}${/* ingestHealthBadge() */ ''}${restartBadge(sessionId)}${updateBadge()}${helpLink()}`;
+  let line3 = `${rl7Badge}${/* ingestHealthBadge() */ ''}${restartBadge()}${updateBadge()}${helpLink()}`;
   // Apara um SEP inicial caso exista (todos os badges começam com ` · `). Sem
   // regex: o SEP contém ANSI com `[`, que vira classe inválida em RegExp.
   if (line3.startsWith(SEP)) line3 = line3.slice(SEP.length);
