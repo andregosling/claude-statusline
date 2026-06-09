@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Two-line dashboard status line for Claude Code.
 // Works on macOS, Linux, and Windows with zero external dependencies (only Node, which Claude Code already ships).
-// VERSION: 2.8.5
+// VERSION: 2.8.6
 // REPO: https://github.com/andregosling/claude-statusline
 
 'use strict';
@@ -13,7 +13,7 @@ const crypto = require('crypto');
 const { execSync, spawn } = require('child_process');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const VERSION = '2.8.5';
+const VERSION = '2.8.6';
 const REPO_RAW = 'https://raw.githubusercontent.com/andregosling/claude-statusline/main';
 const CACHE_DIR = path.join(os.homedir(), '.claude', 'cache', 'claude-statusline');
 const LAST_CHECK = path.join(CACHE_DIR, 'last-check');
@@ -480,7 +480,7 @@ async function backgroundUpdate(sessionId) {
     try { fs.chmodSync(SELF_PATH, 0o755); } catch {}
     fs.appendFileSync(UPDATE_LOG,
       `[${new Date().toISOString()}] updated ${VERSION} -> ${remoteVer}\n`);
-    // Carimba o instante do update. O badge "⬆ atualizado p/ vX" mostra por 5 min
+    // Carimba o instante do update. O badge "⬆ atualizado p/ vX" mostra por 1 min
     // a partir DAQUI (updated_at), independente de sessão. session_id fica só como
     // contexto/diagnóstico.
     try { fs.writeFileSync(PENDING_RESTART, JSON.stringify({ version: remoteVer, session_id: sessionId || '', updated_at: Date.now() })); } catch {}
@@ -520,11 +520,11 @@ function updateBadge() {
 }
 
 // ── "Atualizado p/ vX" badge ──────────────────────────────────────────────────
-// Aviso informativo (sem pedir ação): "⬆ atualizado p/ vX", visível por 5 MIN a
+// Aviso informativo (sem pedir ação): "⬆ atualizado p/ vX", visível por 1 MIN a
 // partir do INSTANTE do update (updated_at, gravado pelo backgroundUpdate). Não
 // depende de sessão — passou a janela, some e limpa o marcador.
 // Suprime com CLAUDE_STATUSLINE_NO_UPDATE_BADGE=1 (mesmo switch do badge de update).
-const POST_UPDATE_NOTICE_MS = 5 * 60 * 1000; // 5 min
+const POST_UPDATE_NOTICE_MS = 60 * 1000; // 1 min
 function restartBadge() {
   if (process.env.CLAUDE_STATUSLINE_NO_UPDATE_BADGE === '1') return '';
   let pending;
@@ -532,7 +532,7 @@ function restartBadge() {
   catch { return ''; }
   if (!pending || !pending.version || !pending.updated_at) return '';
 
-  // Passou a janela de 5 min desde o update → some pra sempre.
+  // Passou a janela de 1 min desde o update → some pra sempre.
   if (Date.now() - pending.updated_at >= POST_UPDATE_NOTICE_MS) {
     try { fs.unlinkSync(PENDING_RESTART); } catch {}
     return '';
