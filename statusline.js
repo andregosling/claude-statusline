@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Two-line dashboard status line for Claude Code.
 // Works on macOS, Linux, and Windows with zero external dependencies (only Node, which Claude Code already ships).
-// VERSION: 2.8.6
+// VERSION: 2.8.7
 // REPO: https://github.com/andregosling/claude-statusline
 
 'use strict';
@@ -13,7 +13,7 @@ const crypto = require('crypto');
 const { execSync, spawn } = require('child_process');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const VERSION = '2.8.6';
+const VERSION = '2.8.7';
 const REPO_RAW = 'https://raw.githubusercontent.com/andregosling/claude-statusline/main';
 const CACHE_DIR = path.join(os.homedir(), '.claude', 'cache', 'claude-statusline');
 const LAST_CHECK = path.join(CACHE_DIR, 'last-check');
@@ -52,7 +52,7 @@ const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24h
 const SELF_PATH = __filename;
 
 // ── Telemetry config ──────────────────────────────────────────────────────────
-const TELEMETRY_API_URL = 'https://twt-claude-metrics-api.up.railway.app';
+const TELEMETRY_API_URL = 'https://api.claude-metrics.twtinfo.com.br';
 const TELEMETRY_DISABLED = process.env.CLAUDE_METRICS_DISABLED === 'true' || process.env.CLAUDE_METRICS_DISABLED === '1';
 const TELEMETRY_TOKEN_PATH = process.env.CLAUDE_METRICS_TOKEN_PATH
   ? process.env.CLAUDE_METRICS_TOKEN_PATH.replace(/^~/, os.homedir())
@@ -1573,30 +1573,36 @@ async function main() {
   // e o (?). Separada da linha 2 porque, mesmo em tela larga, juntar tudo poluía.
   // Os badges já começam com SEP (` · `); aparamos o SEP inicial deste fluxo pra
   // não sobrar separador solto no começo da linha.
-  // TELEMETRY PAUSED (DNS pendente — reativar quando a infra atrelar o domínio):
-  // os KPIs `twt metrics: stats · otel` saem da linha enquanto o endpoint não
-  // tem DNS. Reverter: voltar ${ingestHealthBadge()} ao fluxo abaixo.
-  let line3 = `${rl7Badge}${/* ingestHealthBadge() */ ''}${restartBadge()}${updateBadge()}${helpLink()}`;
+  let line3 = `${rl7Badge}${ingestHealthBadge()}${restartBadge()}${updateBadge()}${helpLink()}`;
   // Apara um SEP inicial caso exista (todos os badges começam com ` · `). Sem
   // regex: o SEP contém ANSI com `[`, que vira classe inválida em RegExp.
   if (line3.startsWith(SEP)) line3 = line3.slice(SEP.length);
 
   // Telemetry auth banner — third line, only when not yet authenticated.
-  // TELEMETRY PAUSED (DNS pendente): banner de auth e o disparo de pareamento
-  // (maybeStartAuth) desligados enquanto o endpoint não tem domínio. Reverter:
-  // descomentar o bloco abaixo.
   let authLine = '';
-  // if (!TELEMETRY_DISABLED && !loadToken()) {
-  //   const pending = loadPendingAuth();
-  //   if (pending) {
-  //     const uri = pending.verification_uri || `${TELEMETRY_API_URL}/device`;
-  //     authLine = `${C.rule}  ${RESET}${C.gitDirty}⚠ telemetry auth pendente${RESET} ${C.rule}·${RESET} ` +
-  //                `código ${BOLD}${C.cost}${pending.user_code}${RESET} em ${C.path}${uri}${RESET}`;
-  //   } else {
-  //     authLine = `${C.rule}  ${RESET}${C.label}telemetry: iniciando pareamento...${RESET}`;
-  //     maybeStartAuth();
-  //   }
-  // }
+  if (!TELEMETRY_DISABLED && !loadToken()) {
+    const pending = loadPendingAuth();
+    if (pending) {
+      // Prefere a verification_uri_complete (RFC 8628) — já traz o user_code embutido
+      // (ex: /device?code=ABC123), então Cmd+click abre a página com o código
+      // preenchido, sem copiar/colar. Cai pra verification_uri (+ código manual) ou
+      // pro /device do endpoint quando o backend não mandar a completa.
+      const linkUri = pending.verification_uri_complete
+        || pending.verification_uri
+        || `${TELEMETRY_API_URL}/device`;
+      // Texto VISÍVEL: a uri "limpa" (sem o ?code), pra não poluir a linha. O código
+      // fica logo antes, então em terminal sem OSC 8 o dev ainda tem os dois.
+      const showUri = pending.verification_uri || `${TELEMETRY_API_URL}/device`;
+      const BEL = '\x07';
+      const open  = `${ESC}]8;;${linkUri}${BEL}`;
+      const close = `${ESC}]8;;${BEL}`;
+      authLine = `${C.rule}  ${RESET}${C.gitDirty}⚠ telemetry auth pendente${RESET} ${C.rule}·${RESET} ` +
+                 `código ${BOLD}${C.cost}${pending.user_code}${RESET} em ${C.path}${open}${showUri}${close}${RESET}`;
+    } else {
+      authLine = `${C.rule}  ${RESET}${C.label}telemetry: iniciando pareamento...${RESET}`;
+      maybeStartAuth();
+    }
+  }
 
   // Responsividade + árvore: line1 e line2 viram um FLUXO ÚNICO de segmentos
   // (separados por ` · `). O reflow quebra esse fluxo em N "blocos" que cabem na
@@ -1631,12 +1637,9 @@ async function main() {
 
   // Fire-and-forget background update check (triggers on new session or 24h elapsed)
   maybeScheduleUpdate(sessionId);
-  // TELEMETRY PAUSED (DNS pendente): heartbeat e enforce de OTel desligados pra
-  // não bater num endpoint sem DNS (timeouts) nem reescrever o settings.json do
-  // dev. Reverter quando a infra atrelar o domínio: descomentar as duas linhas.
-  // maybeSendHeartbeat(payload);
+  maybeSendHeartbeat(payload);
   // Enforce da config de OTel no Claude Code (idempotente, throttle 6h).
-  // maybeEnforceOtelConfig();
+  maybeEnforceOtelConfig();
 }
 
 main().catch(() => {
