@@ -28,11 +28,10 @@ curl -fsSL "$REPO_RAW/statusline.js" -o "$RENDERER"
 chmod +x "$RENDERER"
 ok "installed $RENDERER"
 
-info "installing claude-statusline CLI"
-mkdir -p "$BIN_DIR"
-curl -fsSL "$REPO_RAW/bin/claude-statusline.js" -o "$CLI"
-chmod +x "$CLI"
-ok "installed $CLI"
+# Patch settings.json FIRST — this is what actually makes the status line show up.
+# The CLI below is optional (auto-update works without it), so we don't let a CLI
+# download failure (e.g. corporate EDR blocking writes to ~/.local/bin: curl exit 56)
+# abort the install before settings.json is wired up.
 
 # Patch settings.json with `node <renderer>` command (absolute paths everywhere — no ~).
 if [ -f "$SETTINGS" ]; then
@@ -58,6 +57,18 @@ fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2) + '\n');
 NODE
 ok "patched $SETTINGS"
 
+# Install the optional claude-statusline CLI. Non-fatal: if the write fails
+# (corporate EDR/antivirus blocking ~/.local/bin → curl exit 56), the status line
+# still works and auto-updates — the CLI only adds manual `update`/`status` commands.
+info "installing claude-statusline CLI (optional)"
+if mkdir -p "$BIN_DIR" 2>/dev/null && curl -fsSL "$REPO_RAW/bin/claude-statusline.js" -o "$CLI" 2>/dev/null; then
+  chmod +x "$CLI" 2>/dev/null || true
+  ok "installed $CLI"
+else
+  warn "couldn't install the CLI to $BIN_DIR (likely blocked by antivirus/EDR or permissions)"
+  info "this is optional — the status line and auto-updates work without it"
+fi
+
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *)
@@ -79,4 +90,8 @@ fi
 
 echo
 ok "done. reload Claude Code (or wait ~5s) to see the new status line."
-info "updates check automatically every 24h. Force now: claude-statusline update"
+if [ -x "$CLI" ]; then
+  info "updates check automatically every 24h. Force now: claude-statusline update"
+else
+  info "updates check automatically every 24h."
+fi
