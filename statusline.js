@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Two-line dashboard status line for Claude Code.
 // Works on macOS, Linux, and Windows with zero external dependencies (only Node, which Claude Code already ships).
-// VERSION: 2.8.2
+// VERSION: 2.8.3
 // REPO: https://github.com/andregosling/claude-statusline
 
 'use strict';
@@ -13,10 +13,17 @@ const crypto = require('crypto');
 const { execSync, spawn } = require('child_process');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const VERSION = '2.8.2';
+const VERSION = '2.8.3';
 const REPO_RAW = 'https://raw.githubusercontent.com/andregosling/claude-statusline/main';
 const CACHE_DIR = path.join(os.homedir(), '.claude', 'cache', 'claude-statusline');
 const LAST_CHECK = path.join(CACHE_DIR, 'last-check');
+// Lock de inflight do update: timestamp do último child de update disparado mas
+// ainda não concluído. Como o LAST_CHECK agora só é gravado APÓS uma checagem
+// conclusiva (não antes), ele não serve mais de anti-flood de curto prazo — vários
+// renders na mesma sessão poderiam spawnar childs em paralelo. Este lock cobre isso:
+// não dispara outro check se um foi disparado há < UPDATE_INFLIGHT_TTL_MS.
+const UPDATE_INFLIGHT = path.join(CACHE_DIR, 'update-inflight');
+const UPDATE_INFLIGHT_TTL_MS = 90 * 1000; // 90s: folga p/ download+escrita; child limpa ao terminar
 const LAST_SESSION = path.join(CACHE_DIR, 'last-session');
 const REMOTE_VERSION_CACHE = path.join(CACHE_DIR, 'remote-version');
 const UPDATE_LOG = path.join(CACHE_DIR, 'update.log');
@@ -368,6 +375,8 @@ function maybeScheduleUpdate(sessionId) {
 
     let last = 0;
     try { last = Number(fs.readFileSync(LAST_CHECK, 'utf8')) || 0; } catch {}
+    // LAST_CHECK = última checagem CONCLUSIVA (gravado pelo child só em sucesso).
+    // Uma falha de rede deixa LAST_CHECK velho → stale continua true → re-tenta.
     const stale = Date.now() - last >= CHECK_INTERVAL_MS;
 
     // Remember this session so we don't re-trigger on every render within it.
@@ -376,7 +385,15 @@ function maybeScheduleUpdate(sessionId) {
     }
 
     if (!newSession && !stale) return;
-    fs.writeFileSync(LAST_CHECK, String(Date.now()));
+
+    // Lock de inflight: se já tem um check rodando (disparado há < TTL), não spawna
+    // outro. Substitui o antigo "gravar LAST_CHECK antes" como anti-flood, mas SEM
+    // travar o relógio de 24h quando o check falha. O child remove o lock ao terminar;
+    // o TTL é a rede de segurança caso o child morra sem limpar.
+    let inflight = 0;
+    try { inflight = Number(fs.readFileSync(UPDATE_INFLIGHT, 'utf8')) || 0; } catch {}
+    if (Date.now() - inflight < UPDATE_INFLIGHT_TTL_MS) return;
+    try { fs.writeFileSync(UPDATE_INFLIGHT, String(Date.now())); } catch {}
 
     // Detach a background child that downloads + replaces self. Passa o session_id
     // pra que, se atualizar, grave PENDING_RESTART carimbado com a sessão atual —
@@ -408,45 +425,81 @@ function fetchText(url) {
   });
 }
 
+// Compara duas versões "MAJOR.MINOR.PATCH". Retorna >0 se a > b, <0 se a < b, 0 se igual.
+// Tolerante: partes faltantes contam como 0; partes não-numéricas (pré-release) são
+// ignoradas pra ordenação (comparamos só os números). Usado pra NUNCA rebaixar:
+// o update só aplica se remoteVer > VERSION local.
+function compareVersions(a, b) {
+  const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d !== 0) return d > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+// Retorna true se o background check chegou a uma conclusão CONFIÁVEL (baixou e
+// comparou versões), false se falhou (rede/timeout/resposta inválida). Só quando
+// true o LAST_CHECK é gravado — uma falha NÃO trava o relógio de 24h, então o
+// próximo render tenta de novo em vez de ficar stuck na versão velha.
 async function backgroundUpdate(sessionId) {
   try {
     const remote = await fetchText(`${REPO_RAW}/statusline.js`);
-    if (!remote || !remote.startsWith('#!')) return;
+    // Resposta inválida (corpo vazio, HTML de erro do CDN, etc.) NÃO é conclusiva:
+    // retorna false pra não travar o relógio — o próximo render tenta de novo.
+    if (!remote || !remote.startsWith('#!')) return false;
     const remoteVerMatch = remote.match(/^\/\/ VERSION:\s*([\w.\-]+)/m);
     const remoteVer = remoteVerMatch ? remoteVerMatch[1] : null;
-    if (!remoteVer) return;
+    if (!remoteVer) return false;
 
-    // Always cache the last-known remote version, even when no update is needed.
-    // The renderer reads this synchronously on the hot path to decide whether to
-    // show the "update available" badge — keeps the render itself zero-network.
-    try { fs.writeFileSync(REMOTE_VERSION_CACHE, remoteVer); } catch {}
+    const cmp = compareVersions(remoteVer, VERSION);
 
-    if (remoteVer === VERSION) return;
+    // Cacheia a versão remota pro badge SÓ quando o remoto é >= local. Um nó de CDN
+    // velho servindo uma versão MENOR não deve nem virar "update disponível" nem
+    // sobrescrever o cache — senão o badge pisca "downgrade disponível". Daqui pra
+    // baixo, o remoto é uma resposta legítima → a checagem foi conclusiva.
+    if (cmp >= 0) {
+      try { fs.writeFileSync(REMOTE_VERSION_CACHE, remoteVer); } catch {}
+    }
 
+    // NUNCA rebaixar. Se o remoto é igual OU menor que o local, não há o que
+    // aplicar — mas a checagem FOI conclusiva (conversamos com o CDN e comparamos),
+    // então retorna true pra marcar o relógio de 24h normalmente.
+    if (cmp <= 0) return true;
+
+    // remoteVer > VERSION → aplicar. Guard extra: se o conteúdo já é idêntico
+    // (versão bate mas byte-igual), não reescreve.
     let current = '';
     try { current = fs.readFileSync(SELF_PATH, 'utf8'); } catch {}
-    if (current === remote) return;
+    if (current === remote) return true;
 
     const tmp = SELF_PATH + '.new';
     fs.writeFileSync(tmp, remote, { mode: 0o755 });
     fs.renameSync(tmp, SELF_PATH);
     try { fs.chmodSync(SELF_PATH, 0o755); } catch {}
     fs.appendFileSync(UPDATE_LOG,
-      `[${new Date().toISOString()}] updated to ${remoteVer}\n`);
+      `[${new Date().toISOString()}] updated ${VERSION} -> ${remoteVer}\n`);
     // Carimba o restart pendente com a sessão atual. O badge mostra "reinicie pra
     // concluir" enquanto essa sessão estiver viva; some no 1º render da sessão nova.
     try { fs.writeFileSync(PENDING_RESTART, JSON.stringify({ version: remoteVer, session_id: sessionId || '' })); } catch {}
+    return true;
   } catch (e) {
+    // Falha de rede/timeout/escrita: NÃO conclusiva. Retorna false pra que o
+    // LAST_CHECK não seja gravado e o próximo render re-tente (não fica stuck).
     try {
       fs.appendFileSync(UPDATE_LOG,
         `[${new Date().toISOString()}] update failed: ${e.message}\n`);
     } catch {}
+    return false;
   }
 }
 
 // ── "Update available" badge ──────────────────────────────────────────────────
 // Reads the remote-version cache (written by the background update check, max 24h old).
-// If the cached remote version differs from VERSION, show a clickable amber badge.
+// Shows a clickable amber badge only when the cached remote version is STRICTLY
+// NEWER than VERSION (compareVersions > 0) — nunca "downgrade disponível" se um nó
+// de CDN velho tiver vazado uma versão menor pro cache.
 // Zero network cost on the hot path — just a tiny file read.
 // Suppress with CLAUDE_STATUSLINE_NO_UPDATE_BADGE=1.
 function updateBadge() {
@@ -454,7 +507,7 @@ function updateBadge() {
   let remoteVer;
   try { remoteVer = fs.readFileSync(REMOTE_VERSION_CACHE, 'utf8').trim(); }
   catch { return ''; }
-  if (!remoteVer || remoteVer === VERSION) return '';
+  if (!remoteVer || compareVersions(remoteVer, VERSION) <= 0) return '';
 
   const SEP = `${C.rule} · ${RESET}`;
   const url = `https://github.com/andregosling/claude-statusline/blob/main/HELP.md#update`;
@@ -1287,7 +1340,12 @@ async function main() {
   // Background-update entry point: never runs render path
   if (process.argv.includes('--bg-update')) {
     const bgIdx = process.argv.indexOf('--bg-update');
-  await backgroundUpdate(process.argv[bgIdx + 1] || '');
+    const ok = await backgroundUpdate(process.argv[bgIdx + 1] || '');
+    // Só grava o relógio de 24h se a checagem foi CONCLUSIVA (baixou e comparou).
+    // Falha de rede deixa LAST_CHECK intocado → o próximo render re-tenta, em vez
+    // de ficar stuck na versão velha por 24h. Limpa o lock de inflight de qualquer jeito.
+    try { if (ok) fs.writeFileSync(LAST_CHECK, String(Date.now())); } catch {}
+    try { fs.unlinkSync(UPDATE_INFLIGHT); } catch {}
     return;
   }
   if (process.argv.includes('--bg-auth-init')) {
