@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Two-line dashboard status line for Claude Code.
 // Works on macOS, Linux, and Windows with zero external dependencies (only Node, which Claude Code already ships).
-// VERSION: 2.8.3
+// VERSION: 2.8.4
 // REPO: https://github.com/andregosling/claude-statusline
 
 'use strict';
@@ -13,7 +13,7 @@ const crypto = require('crypto');
 const { execSync, spawn } = require('child_process');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const VERSION = '2.8.3';
+const VERSION = '2.8.4';
 const REPO_RAW = 'https://raw.githubusercontent.com/andregosling/claude-statusline/main';
 const CACHE_DIR = path.join(os.homedir(), '.claude', 'cache', 'claude-statusline');
 const LAST_CHECK = path.join(CACHE_DIR, 'last-check');
@@ -518,28 +518,48 @@ function updateBadge() {
   return `${SEP}${C.cost}${BOLD}${open}⬆ v${remoteVer} available${close}${RESET}`;
 }
 
-// ── "Reinicie pra concluir" badge ─────────────────────────────────────────────
-// Aparece DEPOIS de um auto-update, enquanto o CC ainda roda na sessão em que o
-// arquivo foi sobrescrito. O backgroundUpdate gravou PENDING_RESTART carimbado
-// com aquele session_id. Lógica:
-//   - sem marcador            → nada
-//   - session_id != marcador  → o CC reiniciou; limpa o marcador e some
-//   - session_id == marcador  → ainda na sessão velha; mostra o badge
-// Assim o badge se auto-limpa no 1º render da sessão nova, sem heurística de tempo.
+// ── "Atualizado p/ vX" badge ──────────────────────────────────────────────────
+// Aviso informativo (sem pedir ação) que aparece nos PRIMEIROS 5 MIN da primeira
+// sessão NOVA depois de um auto-update — confirmando "você está rodando a versão
+// nova agora". O backgroundUpdate gravou PENDING_RESTART com { version, session_id }
+// (a sessão em que o arquivo foi sobrescrito — a "velha"). Lógica:
+//   - sem marcador                       → nada
+//   - ainda na sessão do update           → o CC ainda não reiniciou; não mostra
+//   - 1ª sessão nova: carimba shown_at     → começa a janela de 5 min
+//   - dentro dos 5 min, mesma sessão nova  → MOSTRA "⬆ atualizado p/ vX"
+//   - passou 5 min, OU trocou de sessão    → limpa e some pra sempre
 // Suprime com CLAUDE_STATUSLINE_NO_UPDATE_BADGE=1 (mesmo switch do badge de update).
+const POST_UPDATE_NOTICE_MS = 5 * 60 * 1000; // 5 min
 function restartBadge(sessionId) {
   if (process.env.CLAUDE_STATUSLINE_NO_UPDATE_BADGE === '1') return '';
   let pending;
   try { pending = JSON.parse(fs.readFileSync(PENDING_RESTART, 'utf8')); }
   catch { return ''; }
   if (!pending || !pending.version) return '';
-  // Sessão nova (ou sem id confiável no marcador) → update já "pegou", limpa.
-  if (!pending.session_id || (sessionId && sessionId !== pending.session_id)) {
+
+  // Sem sessão confiável no payload → não dá pra cronometrar; descarta.
+  if (!sessionId) { try { fs.unlinkSync(PENDING_RESTART); } catch {} return ''; }
+
+  // Ainda na MESMA sessão em que o update foi aplicado: o CC não reiniciou, então
+  // o aviso "você está na versão nova" ainda não faz sentido. Espera reiniciar.
+  if (sessionId === pending.session_id) return '';
+
+  // Primeira sessão NOVA que vê este marcador → inicia a janela de 5 min, carimbando
+  // a sessão e o instante. (shown_session_id fixa a janela a ESTA sessão nova.)
+  if (pending.shown_session_id !== sessionId) {
+    pending.shown_session_id = sessionId;
+    pending.shown_at = Date.now();
+    try { fs.writeFileSync(PENDING_RESTART, JSON.stringify(pending)); } catch {}
+  }
+
+  // Passou a janela de 5 min → some pra sempre.
+  if (Date.now() - (pending.shown_at || 0) >= POST_UPDATE_NOTICE_MS) {
     try { fs.unlinkSync(PENDING_RESTART); } catch {}
     return '';
   }
+
   const SEP = `${C.rule} · ${RESET}`;
-  return `${SEP}${C.cost}${BOLD}⬆ atualizado p/ v${pending.version} · reinicie para concluir a instalação${RESET}`;
+  return `${SEP}${C.cost}${BOLD}⬆ atualizado p/ v${pending.version}${RESET}`;
 }
 
 // ── Clickable (?) help link via OSC 8 ─────────────────────────────────────────
