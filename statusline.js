@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Two-line dashboard status line for Claude Code.
 // Works on macOS, Linux, and Windows with zero external dependencies (only Node, which Claude Code already ships).
-// VERSION: 2.7.0
+// VERSION: 2.8.0
 // REPO: https://github.com/andregosling/claude-statusline
 
 'use strict';
@@ -13,7 +13,7 @@ const crypto = require('crypto');
 const { execSync, spawn } = require('child_process');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const VERSION = '2.7.0';
+const VERSION = '2.8.0';
 const REPO_RAW = 'https://raw.githubusercontent.com/andregosling/claude-statusline/main';
 const CACHE_DIR = path.join(os.homedir(), '.claude', 'cache', 'claude-statusline');
 const LAST_CHECK = path.join(CACHE_DIR, 'last-check');
@@ -40,7 +40,7 @@ const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24h
 const SELF_PATH = __filename;
 
 // ── Telemetry config ──────────────────────────────────────────────────────────
-const TELEMETRY_API_URL = process.env.CLAUDE_METRICS_API_URL || 'http://localhost:3005';
+const TELEMETRY_API_URL = 'https://twt-claude-metrics-api.up.railway.app';
 const TELEMETRY_DISABLED = process.env.CLAUDE_METRICS_DISABLED === 'true' || process.env.CLAUDE_METRICS_DISABLED === '1';
 const TELEMETRY_TOKEN_PATH = process.env.CLAUDE_METRICS_TOKEN_PATH
   ? process.env.CLAUDE_METRICS_TOKEN_PATH.replace(/^~/, os.homedir())
@@ -61,6 +61,11 @@ const C = {
   git:      rgb(195, 232, 141),
   gitDirty: rgb(255, 203, 107),
   gitGone:  rgb(240, 113, 120),
+  // Contadores do git: cor fixa por tipo, independente do estado da branch.
+  gitCount: rgb(160, 170, 190),  // ahead/↑ behind/↓ — neutro
+  gitAdd:   rgb(195, 232, 141),  // +  verde
+  gitMod:   rgb(255, 203, 107),  // ~  amarelo
+  gitDel:   rgb(240, 113, 120),  // −  vermelho
   model:    rgb(199, 146, 234),
   cost:     rgb(255, 203, 107),
   tokens:   rgb(130, 170, 255),
@@ -233,12 +238,15 @@ function gitSegment(cwd) {
   const dirty = add + mod + del > 0;
   const color = dirty ? C.gitDirty : C.git;
 
+  // Nome da branch usa a cor de estado (verde limpo / amarelo dirty). Os
+  // contadores têm cor FIXA por tipo, independente do estado da branch:
+  // ahead/behind neutro, add verde, mod amarelo, del vermelho.
   let out = `${color}${G.branch} ${branch}`;
-  if (ahead)  out += ` ${G.ahead}${ahead}`;
-  if (behind) out += ` ${G.behind}${behind}`;
-  if (add) out += ` ${G.add}${add}`;
-  if (mod) out += ` ${G.mod}${mod}`;
-  if (del) out += ` ${G.del}${del}`;
+  if (ahead)  out += ` ${C.gitCount}${G.ahead}${ahead}`;
+  if (behind) out += ` ${C.gitCount}${G.behind}${behind}`;
+  if (add) out += ` ${C.gitAdd}${G.add}${add}`;
+  if (mod) out += ` ${C.gitMod}${G.mod}${mod}`;
+  if (del) out += ` ${C.gitDel}${G.del}${del}`;
   return out + RESET;
 }
 
@@ -344,12 +352,8 @@ function modelDisplay(id, display) {
 //   - more than 24h passed since the last check (covers marathon sessions).
 // Within the same session it never re-checks more than once per 24h, so no flood.
 function maybeScheduleUpdate(sessionId) {
-  // Auto-update DESARMADO por padrão nesta branch (feat/otel-indicators-responsive).
-  // O `main` no GitHub está em v2.6.1 — versão ANTIGA que ignora o kill-switch e
-  // rebaixaria o arquivo, clobberando estas mudanças (já aconteceu uma vez). Só
-  // religa com CLAUDE_STATUSLINE_NO_UPDATE=0 explícito. Ao mergear pro main com uma
-  // versão que respeite o kill-switch, voltar à condição `=== '1'` normal.
-  if (process.env.CLAUDE_STATUSLINE_NO_UPDATE !== '0') return;
+  // Kill-switch: CLAUDE_STATUSLINE_NO_UPDATE=1 desarma o auto-update.
+  if (process.env.CLAUDE_STATUSLINE_NO_UPDATE === '1') return;
   try {
     fs.mkdirSync(CACHE_DIR, { recursive: true });
 
@@ -581,7 +585,7 @@ function writeHelpData() {
 // no topo (lê window.DIAG do help-data.js) + cards com glow neon explicando cada
 // segmento. Cada card tem id pra âncora (#stats etc).
 // Idempotente: só reescreve se o conteúdo mudou. Bump HELP_VERSION ao editar.
-const HELP_VERSION = 6;
+const HELP_VERSION = 9;
 function writeHelpHtml() {
   const html = `<!doctype html>
 <html lang="pt-br" data-v="${HELP_VERSION}">
@@ -681,7 +685,8 @@ function writeHelpHtml() {
   <div class="mock">
     <div class="mock-bar"><span class="tl r"></span><span class="tl y"></span><span class="tl g"></span><span class="ttl">claude — statusline</span></div>
     <div class="mock-body"><span class="g3">╭─</span>  ~/code/projeto · ⎇ main +3 ~2 · 󰚩 Opus · high
-<span class="g3">╰─</span>  $0.42 ·  219k ctx · last +187 ·  18m · ███████░░░ 73%  +156/-23 · ● 5h · resets in 2h · 🏃 fast 1.4× · twt metrics: <span class="ok">stats</span> · <span class="bad">otel</span> <span class="g3">(?)</span></div>
+<span class="g3">│</span>   $0.42 ·  219k ctx · last +187 ·  18m · ███████░░░ 73%  +156/-23 · ● 5h · resets in 2h · 🏃 fast 1.4×
+<span class="g3">╰─</span> ● 7d · resets in 3d2h · ⛅ ok 0.8× · twt metrics: <span class="ok">stats</span> · <span class="bad">otel</span> <span class="g3">(?)</span></div>
   </div>
 
   <!-- Painel de diagnóstico ao vivo (preenchido via window.DIAG do help-data.js) -->
@@ -735,6 +740,18 @@ function writeHelpHtml() {
     <div class="state y"><span class="dot"></span><span class="nm">🏃 fast</span><span class="ds">1.1–1.5× — segura um pouco</span></div>
     <div class="state rd"><span class="dot"></span><span class="nm">🔥 hot</span><span class="ds">&gt; 1.5× — vai bater o teto cedo</span></div></div>
     <p style="margin-top:14px"><b>warming</b>: nos primeiros ~30min o número é real mas oscila (denominador minúsculo). Some sozinho depois.</p></div></section>
+  <section id="rl7d"><div class="card"><div class="card-head"><span class="chip">● 7d</span><h2>Rate limit semanal · a bolinha 7d</h2></div>
+    <p>Mesma ideia da bolinha de 5h, só que pro limite de <b>7 dias</b>. Reflete o <b>% bruto de uso</b> da janela semanal, <b>ignorando o tempo</b>. <span class="mono">resets in Xd</span> = tempo até zerar (em dias/horas).</p>
+    <div class="states"><div class="state g"><span class="dot"></span><span class="nm">&lt; 50%</span><span class="ds">tranquilo</span></div>
+    <div class="state y"><span class="dot"></span><span class="nm">50–79%</span><span class="ds">atenção</span></div>
+    <div class="state rd"><span class="dot"></span><span class="nm">≥ 80%</span><span class="ds">perto do teto semanal</span></div></div></div></section>
+  <section id="wkpace"><div class="card"><div class="card-head"><span class="chip">⛅ ok</span><h2>Pace semanal — clima, não corrida</h2></div>
+    <p>Mesma conta do pace de 5h (<span class="mono">uso ÷ tempo_decorrido</span>), mas sobre a janela de <b>7 dias</b>. Pra <b>nunca</b> confundir com o pace de 5h, usa ícones de <b>clima</b> (☀️/⛅/🌧️/⛈️) — a corrida (🐢/🚶/🏃/🔥) é só do 5h. <b>1.0×</b> = bate 100% exatamente no reset semanal · <b>&lt;1</b> folga · <b>&gt;1</b> bate o teto antes. Os limites de cor são <b>mais largos</b> que os do 5h de propósito: numa semana o uso oscila mais, então só vira tempestade em rajada de verdade (&gt;2×).</p>
+    <div class="states"><div class="state g"><span class="dot"></span><span class="nm">☀️ clear</span><span class="ds">&lt; 0.9× — gasta à vontade</span></div>
+    <div class="state g"><span class="dot"></span><span class="nm">⛅ ok</span><span class="ds">0.9–1.4× — no ritmo</span></div>
+    <div class="state y"><span class="dot"></span><span class="nm">🌧️ heavy</span><span class="ds">1.4–2.0× — segura um pouco</span></div>
+    <div class="state rd"><span class="dot"></span><span class="nm">⛈️ storm</span><span class="ds">&gt; 2.0× — vai bater o teto semanal cedo</span></div></div>
+    <p style="margin-top:14px"><b>warming</b>: a janela de 7d demora pra "encher" — nas primeiras horas o número oscila (denominador minúsculo). Some sozinho.</p></div></section>
 
   <div class="section-label">twt metrics — ingestão</div>
   <section id="twt-metrics"><div class="card"><div class="card-head"><span class="chip">twt</span><h2>Seus dados estão chegando?</h2></div>
@@ -1267,6 +1284,8 @@ async function main() {
   const ctxPct = pick(payload, 'context_window.used_percentage', 0);
   const rl5 = pick(payload, 'rate_limits.five_hour.used_percentage');
   const rl5Reset = pick(payload, 'rate_limits.five_hour.resets_at');
+  const rl7 = pick(payload, 'rate_limits.seven_day.used_percentage');
+  const rl7Reset = pick(payload, 'rate_limits.seven_day.resets_at');
   const worktree = pick(payload, 'workspace.git_worktree');
   const effort = pick(payload, 'effort.level');
 
@@ -1370,6 +1389,77 @@ async function main() {
     rlBadge = badge;
   }
 
+  // ── 7-day (weekly) rate-limit + pace indicator ──────────────────────────────
+  // Same TWO-signal idea as the 5h block (bolinha = raw usage, pace = burn vs
+  // elapsed) but over the 7-DAY window — so elapsedFrac is computed against
+  // 7*24h, NOT 5h. Crucially, the pace here uses a DELIBERATELY DIFFERENT visual
+  // language so it's never confused with the 5h pace: WEATHER icons (☀️/⛅/🌧️/⛈️)
+  // instead of the 5h runner emojis (🐢/🚶/🏃/🔥). Bucket labels mirror the 5h
+  // style (clear/ok/heavy/storm). Same green/amber/red scale + ×multiplier.
+  let rl7Badge = '';
+  if (rl7 != null && rl7 !== 'null') {
+    const used7 = Number(rl7) || 0;                // 0–100, % of 7d budget used
+    let resetStr7 = '';
+    let elapsedFrac7 = null;                        // 0–1, how much of the 7d window has passed
+    if (rl7Reset) {
+      const secsLeft = Number(rl7Reset) - Math.floor(Date.now() / 1000);
+      if (secsLeft > 0) {
+        // Coarser unit than the 5h badge: days first, then hours, then minutes.
+        if (secsLeft >= 86400) resetStr7 = `${Math.floor(secsLeft/86400)}d${Math.floor((secsLeft%86400)/3600)}h`;
+        else if (secsLeft >= 3600) resetStr7 = `${Math.floor(secsLeft/3600)}h${Math.floor((secsLeft%3600)/60)}m`;
+        else if (secsLeft >= 60) resetStr7 = `${Math.floor(secsLeft/60)}m`;
+        else resetStr7 = `${secsLeft}s`;
+        // elapsedFrac é contínuo, em SEGUNDOS sobre a janela de 7d em segundos —
+        // NÃO arredonda por dia. O `resets in 6d11h` acima é só formatação do
+        // texto; o pace usa o tempo exato, então tem precisão fina (não pula só
+        // a cada 24h). Ex: passou 3d 11h 20m → elapsedFrac reflete isso direto.
+        const SEVEN_D = 7 * 24 * 3600;
+        elapsedFrac7 = Math.max(0, Math.min(1, (SEVEN_D - secsLeft) / SEVEN_D));
+      }
+    }
+
+    // Bolinha color — RAW USAGE only, time-independent (same thresholds as 5h).
+    const dotColor7 = used7 >= 80 ? C.ctxHot : used7 >= 50 ? C.ctxWarn : C.ctxOk;
+
+    // Pace = used_fraction / elapsed_fraction, raw (no smoothing). "warming" while
+    // the window is fresh — for 7d the denominator is huge, so the unstable phase
+    // lasts longer in wall-clock terms but is the same <5%-of-window threshold.
+    let pace7 = null;
+    let pace7Warming = false;
+    if (elapsedFrac7 != null && elapsedFrac7 > 0) {
+      pace7 = (used7 / 100) / elapsedFrac7;
+      pace7Warming = elapsedFrac7 < 0.05;
+    }
+
+    // Weather bucket: distinct emoji family from the 5h runner set, on purpose.
+    // Buckets AFROUXADOS de propósito: numa janela de 7 dias o consumo oscila
+    // muito mais que numa de 5h, então herdar os cortes do 5h (0.7/1.1/1.5) fazia
+    // o pace cair em "heavy/storm" à toa durante o dia (alarme falso). Estes
+    // cortes mais largos só disparam alarme em rajada REAL (>2× nominal).
+    //   AFROUXADO (atual):  clear <0.9 · ok ≤1.4 · heavy ≤2.0 · storm >2.0
+    //   APERTADO (original, = cortes do 5h):  <0.7 · ≤1.1 · ≤1.5 · >1.5
+    // → Para "DESAFROUXAR os buckets do weekly": restaurar os cortes APERTADOS
+    //   acima (0.7/1.1/1.5), que são os mesmos do pace de 5h.
+    let wIcon = '', wLabel = '', wColor = C.ctxOk;
+    if (pace7 != null) {
+      if (pace7 < 0.9)        { wIcon = '☀️'; wLabel = 'clear'; wColor = C.ctxOk;   }
+      else if (pace7 <= 1.4)  { wIcon = '⛅'; wLabel = 'ok';    wColor = C.ctxOk;   }
+      else if (pace7 <= 2.0)  { wIcon = '🌧️'; wLabel = 'heavy'; wColor = C.ctxWarn; }
+      else                    { wIcon = '⛈️'; wLabel = 'storm'; wColor = C.ctxHot;  }
+    }
+
+    const pace7X = pace7 != null ? pace7.toFixed(1) : null;
+
+    let badge7 = `${SEP}${dotColor7}●${RESET} ${C.label}7d`;
+    if (resetStr7) badge7 += ` · resets in ${resetStr7}`;
+    badge7 += RESET;
+    if (pace7X != null) {
+      const warmTag7 = pace7Warming ? ` ${DIM}(warming)${RESET}` : '';
+      badge7 += `${SEP}${wColor}${wIcon} ${wLabel} ${pace7X}×${RESET}${warmTag7}`;
+    }
+    rl7Badge = badge7;
+  }
+
   let line1 = `${C.path}${BOLD}${G.folder} ${pathStr}${RESET}`;
   if (gitStr) line1 += `${SEP}${gitStr}`;
   line1 += `${SEP}${C.model}${G.model} ${modelStr}${RESET}${effortBadge}${wtBadge}`;
@@ -1377,11 +1467,23 @@ async function main() {
   // Tokens segment: "219.4k ctx · last +187"
   //   "219.4k ctx" = current context window size (the meaningful number)
   //   "last +187"  = output of the most recent turn (snapshot — NOT a session total)
+  // Linha 2 — custo/ctx/tempo/barra/linhas + rate limit de 5h (limite + pace).
+  // O 5h fica aqui (não na linha 3) porque é o sinal de curto prazo que o dev
+  // checa o tempo todo; o 7d (semanal) é menos urgente e vai pra linha 3.
   const line2 = `${C.cost}${G.cost} ${fmtCost(cost)}${RESET}${SEP}` +
     `${C.tokens}${G.token} ${fmtTokens(ctxTokens)} ctx${RESET} ${C.rule}·${RESET} ${C.label}last +${fmtTokens(lastOut)}${RESET}${SEP}` +
     `${C.time}${G.clock} ${fmtDuration(durMs)}${RESET}${SEP}` +
     `${ctxC}${G.ctx} ${bar} ${Math.floor(Number(ctxPct) || 0)}%${RESET}` +
-    `${linesBadge}${rlBadge}${ingestHealthBadge()}${updateBadge()}${helpLink()}`;
+    `${linesBadge}${rlBadge}`;
+
+  // Linha 3 — rate limit semanal (7d + pace wk), saúde de ingestão (twt metrics)
+  // e o (?). Separada da linha 2 porque, mesmo em tela larga, juntar tudo poluía.
+  // Os badges já começam com SEP (` · `); aparamos o SEP inicial deste fluxo pra
+  // não sobrar separador solto no começo da linha.
+  let line3 = `${rl7Badge}${ingestHealthBadge()}${updateBadge()}${helpLink()}`;
+  // Apara um SEP inicial caso exista (todos os badges começam com ` · `). Sem
+  // regex: o SEP contém ANSI com `[`, que vira classe inválida em RegExp.
+  if (line3.startsWith(SEP)) line3 = line3.slice(SEP.length);
 
   // Telemetry auth banner — third line, only when not yet authenticated.
   let authLine = '';
@@ -1415,6 +1517,8 @@ async function main() {
   // antes é inofensivo; estourar faz o Claude Code truncar com "…".
   const avail = W ? W - 5 : null;
   const blocks = [...reflowLine(line1, avail, ''), ...reflowLine(line2, avail, '')];
+  // line3 (rate limits + twt metrics) só entra se tiver conteúdo visível.
+  if (line3 && visibleWidth(line3) > 0) blocks.push(...reflowLine(line3, avail, ''));
 
   const treeGlyph = (i, n) =>
     i === 0 ? G.tl : i === n - 1 ? G.bl : G.mid;
